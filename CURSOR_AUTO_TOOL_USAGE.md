@@ -30,9 +30,8 @@ python3 test_server_interactive.py
 {
   "mcpServers": {
     "api_scan": {
-      "command": "python3",
-      "args": ["run_cursor_server.py"],
-      "cwd": "/home/huawei/go/src/github.com/Lance52259/api-scan"
+      "command": "wsl",
+      "args": ["/home/huawei/.local/bin/api-scan", "--run"]
     }
   }
 }
