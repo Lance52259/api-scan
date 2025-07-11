@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/local/bin/python3.10
 """启动Cursor优化的华为云API分析MCP服务器 - 生产版"""
 
 import sys
