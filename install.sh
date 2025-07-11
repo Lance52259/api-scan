@@ -2,8 +2,8 @@
 set -e
 
 # 华为云API分析MCP服务器 - 自动安装脚本
-# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/br_core_codes/install.sh | bash
-# 或指定分支: BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/br_core_codes/install.sh | bash
+# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+# 或指定分支: BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
 
 REPO_URL="https://github.com/Lance52259/api-scan.git"
 REPO_NAME="api-scan"
@@ -12,7 +12,7 @@ BIN_DIR="$HOME/.local/bin"
 EXECUTABLE_NAME="api-scan"
 
 # 默认分支（可通过环境变量BRANCH覆盖）
-DEFAULT_BRANCH="br_core_codes"
+DEFAULT_BRANCH="master"
 INSTALL_BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
 
 # 颜色定义
@@ -499,7 +499,7 @@ def update():
     import urllib.request
     import tempfile
     
-    install_script_url = f"https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'br_core_codes')}/install.sh"
+    install_script_url = f"https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'master')}/install.sh"
     
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -518,7 +518,7 @@ def update():
             
     except Exception as e:
         print(f"❌ 更新失败: {e}")
-        current_branch = os.environ.get('INSTALL_BRANCH', 'br_core_codes')
+        current_branch = os.environ.get('INSTALL_BRANCH', 'master')
         print(f"请手动运行: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{current_branch}/install.sh | bash")
 
 def show_help():
@@ -557,7 +557,7 @@ Cursor配置:
   在Cursor MCP设置中使用: $EXECUTABLE_NAME --run
 
 更新方式:
-  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'br_core_codes')}/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'master')}/install.sh | bash
     '''.strip())
 
 def main():
