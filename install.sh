@@ -2,7 +2,7 @@
 set -e
 
 # 华为云API分析MCP服务器 - 自动安装脚本
-# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/main/install.sh | bash
+# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
 
 REPO_URL="https://github.com/Lance52259/api-scan.git"
 REPO_NAME="api-scan"
@@ -98,7 +98,7 @@ clone_or_update_repo() {
         print_info "检测到已有安装，正在更新..."
         cd "$INSTALL_DIR"
         git fetch origin
-        git reset --hard origin/main
+        git reset --hard origin/master
         print_success "代码更新完成"
     else
         print_info "从GitHub克隆仓库..."
@@ -251,7 +251,7 @@ def update():
     import urllib.request
     import tempfile
     
-    install_script_url = "https://raw.githubusercontent.com/Lance52259/api-scan/main/install.sh"
+    install_script_url = "https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh"
     
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -270,7 +270,7 @@ def update():
             
     except Exception as e:
         print(f"❌ 更新失败: {e}")
-        print("请手动运行: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/main/install.sh | bash")
+        print("请手动运行: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash")
 
 def show_help():
     """显示帮助信息"""
@@ -308,7 +308,7 @@ Cursor配置:
   在Cursor MCP设置中使用: $EXECUTABLE_NAME --run
 
 更新方式:
-  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
     '''.strip())
 
 def main():
@@ -437,7 +437,7 @@ show_usage() {
     echo '  }'
     echo ""
     echo -e "${YELLOW}🔄 更新方法:${NC}"
-    echo "  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/main/install.sh | bash"
+    echo "  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash"
     echo ""
 }
 
