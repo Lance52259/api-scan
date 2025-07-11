@@ -4,8 +4,7 @@
 
 ### 1. 一键安装
 ```bash
-cd /home/huawei/go/src/github.com/Lance52259/api-scan
-./api-scan --install
+curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
 ```
 
 ### 2. 验证安装
