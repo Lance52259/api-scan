@@ -2,8 +2,8 @@
 set -e
 
 # 华为云API分析MCP服务器 - 自动安装脚本
-# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/br_core_codes/install.sh | bash
-# 或指定分支: BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/br_core_codes/install.sh | bash
+# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+# 或指定分支: BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
 
 REPO_URL="https://github.com/Lance52259/api-scan.git"
 REPO_NAME="api-scan"
@@ -12,8 +12,11 @@ BIN_DIR="$HOME/.local/bin"
 EXECUTABLE_NAME="api-scan"
 
 # 默认分支（可通过环境变量BRANCH覆盖）
-DEFAULT_BRANCH="br_core_codes"
+DEFAULT_BRANCH="master"
 INSTALL_BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
+
+# 全局变量
+PIP_CMD=""
 
 # 颜色定义
 RED='\033[0;31m'
@@ -66,30 +69,48 @@ check_dependencies() {
     fi
     
     # 检查python3
-    if ! command_exists python3; then
-        missing_deps+=("python3")
-        print_warning "缺少 python3 - 必需的运行时环境"
+    if ! command_exists python3.10; then
+        missing_deps+=("python3.10")
+        print_warning "缺少 python3.10 - 必需的运行时环境"
     else
-        local python_version=$(python3 --version 2>&1)
-        print_success "python3 已安装: $python_version"
+        local python_version=$(python3.10 --version 2>&1)
+        print_success "python3.10 已安装: $python_version"
         
         # 检查Python版本是否满足要求（MCP需要Python >=3.10）
-        local python_major=$(python3 -c "import sys; print(sys.version_info.major)")
-        local python_minor=$(python3 -c "import sys; print(sys.version_info.minor)")
+        local python_major=$(python3.10 -c "import sys; print(sys.version_info.major)")
+        local python_minor=$(python3.10 -c "import sys; print(sys.version_info.minor)")
         
         if [ "$python_major" -eq 3 ] && [ "$python_minor" -lt 10 ]; then
             print_warning "Python版本可能过低 ($python_version)，MCP建议使用Python 3.10+，但将尝试继续"
+        else
+            print_success "Python版本满足要求 ($python_version)"
         fi
     fi
     
-    # 检查pip3
-    if ! command_exists pip3; then
-        missing_deps+=("python3-pip")
-        print_warning "缺少 pip3 - 必需用于Python包管理"
-    else
+    # 检查pip3.10（优先）或pip3
+    local pip_cmd=""
+    if command_exists pip3.10; then
+        pip_cmd="pip3.10"
+        local pip_version=$(pip3.10 --version 2>&1)
+        print_success "pip3.10 已安装: $pip_version"
+    elif command_exists pip3; then
+        pip_cmd="pip3"
         local pip_version=$(pip3 --version 2>&1)
         print_success "pip3 已安装: $pip_version"
+        
+        # 检查pip3是否与python3.10兼容
+        local pip_python_version=$(pip3 show pip 2>/dev/null | grep "Location:" | grep -o "python[0-9]\.[0-9]*" | head -1)
+        if [[ "$pip_python_version" != "python3.10" && "$pip_python_version" != "" ]]; then
+            print_warning "检测到pip3可能不兼容Python 3.10，将尝试使用python3.10 -m pip"
+            pip_cmd="python3.10 -m pip"
+        fi
+    else
+        missing_deps+=("python3-pip")
+        print_warning "缺少 pip3 - 必需用于Python包管理"
     fi
+    
+    # 将pip命令保存到全局变量供后续使用
+    PIP_CMD="$pip_cmd"
     
     # 检查curl（用于更新功能）
     if ! command_exists curl; then
@@ -276,8 +297,18 @@ install_python_deps() {
     
     # 检查pip3版本并升级如果需要
     print_info "检查pip版本..."
-    pip3 install --user --upgrade pip || {
+    
+    # 首先尝试升级pip
+    if "$PIP_CMD" install --user --upgrade pip; then
+        print_success "pip升级成功"
+    else
         print_warning "pip升级失败，继续使用当前版本"
+    fi
+    
+    # 更新包索引（对于老版本的pip特别重要）
+    print_info "更新包索引..."
+    "$PIP_CMD" install --user --upgrade setuptools wheel || {
+        print_warning "setuptools/wheel更新失败，继续执行"
     }
     
     # 读取requirements.txt并逐个检查安装依赖
@@ -297,11 +328,11 @@ install_python_deps() {
             print_info "检查包: $package_name"
             
             # 检查包是否已安装
-            if ! python3 -c "import $package_name" >/dev/null 2>&1; then
+            if ! python3.10 -c "import $package_name" >/dev/null 2>&1; then
                 # 对于mcp包的特殊处理（常见的导入名称可能不同）
                 if [ "$package_name" = "mcp" ]; then
                     # 尝试检查是否有mcp相关的安装
-                    if ! python3 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
+                    if ! python3.10 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
                         missing_packages+=("$package_spec")
                         print_warning "包 $package_name 未安装或版本不符合要求"
                     else
@@ -327,27 +358,70 @@ install_python_deps() {
             local package_name=$(echo "$package_spec" | sed 's/[><=!].*//' | tr -d '[:space:]')
             print_info "正在安装: $package_spec"
             
-            # 使用用户级安装避免权限问题
-            if pip3 install --user "$package_spec"; then
-                print_success "成功安装: $package_spec"
+            # 特殊处理mcp包
+            if [ "$package_name" = "mcp" ]; then
+                print_info "尝试安装MCP包..."
                 
-                # 验证安装
-                if [ "$package_name" = "mcp" ]; then
-                    if python3 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
-                        print_success "MCP包验证通过"
-                    else
-                        print_warning "MCP包安装后验证失败，但继续执行"
-                    fi
+                # 方法1：直接安装官方mcp包
+                if "$PIP_CMD" install --user --upgrade --index-url https://pypi.org/simple/ mcp; then
+                    print_success "成功安装官方MCP包"
+                # 方法2：如果失败，尝试安装特定版本
+                elif "$PIP_CMD" install --user "mcp==1.0.0"; then
+                    print_success "成功安装MCP包 v1.0.0"
+                # 方法3：如果还失败，安装可用的最新版本
+                elif "$PIP_CMD" install --user mcp --pre; then
+                    print_success "成功安装MCP包（预发布版本）"
                 else
-                    if python3 -c "import $package_name" >/dev/null 2>&1; then
-                        print_success "包 $package_name 验证通过"
-                    else
-                        print_warning "包 $package_name 安装后验证失败"
-                    fi
+                    print_error "MCP包安装失败，所有方法都尝试过了"
+                    print_info "尝试手动检查: $PIP_CMD search mcp"
+                    requirements_failed=true
+                    continue
                 fi
             else
-                print_error "安装失败: $package_spec"
-                requirements_failed=true
+                # 常规包安装
+                if ! "$PIP_CMD" install --user "$package_spec"; then
+                    print_error "安装失败: $package_spec"
+                    
+                    # 对于httpx和pydantic，尝试安装兼容版本
+                    if [ "$package_name" = "httpx" ]; then
+                        print_info "尝试安装兼容的httpx版本..."
+                        if "$PIP_CMD" install --user "httpx>=0.22.0,<0.23.0"; then
+                            print_success "成功安装兼容的httpx版本"
+                        else
+                            requirements_failed=true
+                            continue
+                        fi
+                    elif [ "$package_name" = "pydantic" ]; then
+                        print_info "尝试安装兼容的pydantic版本..."
+                        if "$PIP_CMD" install --user "pydantic>=1.9.0,<1.10.0"; then
+                            print_success "成功安装兼容的pydantic版本"
+                        else
+                            requirements_failed=true
+                            continue
+                        fi
+                    else
+                        requirements_failed=true
+                        continue
+                    fi
+                else
+                    print_success "成功安装: $package_spec"
+                fi
+            fi
+            
+            # 验证安装
+            if [ "$package_name" = "mcp" ]; then
+                if python3.10 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
+                    local mcp_version=$(python3.10 -c "import mcp; print(mcp.__version__)" 2>/dev/null)
+                    print_success "MCP包验证通过 (版本: $mcp_version)"
+                else
+                    print_warning "MCP包安装后验证失败，但继续执行"
+                fi
+            else
+                if python3.10 -c "import $package_name" >/dev/null 2>&1; then
+                    print_success "包 $package_name 验证通过"
+                else
+                    print_warning "包 $package_name 安装后验证失败"
+                fi
             fi
         done
     else
@@ -356,7 +430,7 @@ install_python_deps() {
     
     # 最终验证：尝试安装整个requirements.txt（以防遗漏）
     print_step "执行完整依赖安装验证..."
-    if pip3 install --user -r requirements.txt; then
+    if "$PIP_CMD" install --user -r requirements.txt; then
         print_success "Python依赖安装和验证完成"
     else
         print_warning "完整依赖验证有警告，但继续执行"
@@ -365,7 +439,7 @@ install_python_deps() {
     # 如果有关键失败，提示用户
     if [ "$requirements_failed" = true ]; then
         print_warning "某些依赖安装失败，可能影响功能"
-        print_info "您可以稍后手动运行: pip3 install --user -r $INSTALL_DIR/requirements.txt"
+        print_info "您可以稍后手动运行: $PIP_CMD install --user -r $INSTALL_DIR/requirements.txt"
     fi
 }
 
@@ -377,7 +451,7 @@ create_executable() {
     
     # 创建包装脚本
     cat > "$executable_path" << EOF
-#!/usr/bin/env python3
+#!/usr/bin/env python3.10
 """
 华为云API分析MCP服务器 - 全局命令行工具
 自动安装版本
@@ -403,19 +477,23 @@ import argparse
 
 def get_python_executable():
     """获取Python可执行文件路径"""
-    return sys.executable or "python3"
+    return sys.executable or "python3.10"
 
 def run_server():
     """启动MCP服务器(生产模式)"""
-    print("🚀 启动华为云API分析MCP服务器...")
+    # 移除启动消息，避免干扰MCP协议通信
+    # print("🚀 启动华为云API分析MCP服务器...")
     
     try:
         os.chdir(INSTALL_DIR)
+        # 确保stderr用于错误信息，stdout专用于MCP协议
         subprocess.run([get_python_executable(), "run_cursor_server.py"])
     except KeyboardInterrupt:
-        print("\n⏹️  服务器已停止")
+        # 不输出停止信息，避免干扰
+        pass
     except Exception as e:
-        print(f"❌ 启动失败: {e}")
+        # 错误信息输出到stderr
+        print(f"❌ 启动失败: {e}", file=sys.stderr)
         sys.exit(1)
 
 def run_test():
@@ -499,7 +577,7 @@ def update():
     import urllib.request
     import tempfile
     
-    install_script_url = f"https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'br_core_codes')}/install.sh"
+    install_script_url = f"https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'master')}/install.sh"
     
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -518,7 +596,7 @@ def update():
             
     except Exception as e:
         print(f"❌ 更新失败: {e}")
-        current_branch = os.environ.get('INSTALL_BRANCH', 'br_core_codes')
+        current_branch = os.environ.get('INSTALL_BRANCH', 'master')
         print(f"请手动运行: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{current_branch}/install.sh | bash")
 
 def show_help():
@@ -557,7 +635,7 @@ Cursor配置:
   在Cursor MCP设置中使用: $EXECUTABLE_NAME --run
 
 更新方式:
-  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'br_core_codes')}/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'master')}/install.sh | bash
     '''.strip())
 
 def main():

@@ -8,13 +8,19 @@ import signal
 from typing import Dict, Any, List, Optional, AsyncIterator
 from .client import HuaweiCloudApiClient
 
-# 配置最小日志，只记录严重错误
+# 配置最小日志，只记录严重错误到stderr
 logging.basicConfig(
-    level=logging.CRITICAL,
+    level=logging.ERROR,  # 改为ERROR级别以减少干扰
     format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
+    stream=sys.stderr,
+    force=True  # 强制重新配置logging，Python 3.10支持
 )
 logger = logging.getLogger(__name__)
+
+# 确保没有其他日志输出到stdout
+for handler in logging.root.handlers[:]:
+    if handler.stream == sys.stdout:
+        logging.root.removeHandler(handler)
 
 
 class CursorOptimizedMCPServer:
@@ -93,11 +99,47 @@ class CursorOptimizedMCPServer:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
                 },
                 "serverInfo": {
                     "name": "api_scan",  # 使用下划线，避免短横线
                     "version": "1.0.0"
+                }
+            }
+        )
+
+    async def handle_list_offerings(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """处理ListOfferings请求 - Cursor期望的标准方法"""
+        return self.create_response(
+            request.get("id"),
+            {
+                "tools": [
+                    {
+                        "name": name,
+                        "description": tool["description"],
+                        "inputSchema": tool["inputSchema"]
+                    }
+                    for name, tool in self.tools.items()
+                ],
+                "resources": [],
+                "prompts": []
+            }
+        )
+
+    async def handle_server_info(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """处理服务器信息请求"""
+        return self.create_response(
+            request.get("id"),
+            {
+                "name": "api_scan",
+                "version": "1.0.0",
+                "description": "华为云API分析MCP服务器",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
                 }
             }
         )
@@ -142,6 +184,27 @@ class CursorOptimizedMCPServer:
                 error={"code": -32603, "message": f"Tool execution error: {str(e)}"}
             )
 
+    async def handle_resources_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """处理资源列表请求"""
+        return self.create_response(
+            request.get("id"),
+            {"resources": []}
+        )
+
+    async def handle_prompts_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """处理提示列表请求"""
+        return self.create_response(
+            request.get("id"),
+            {"prompts": []}
+        )
+
+    async def handle_ping(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """处理ping请求"""
+        return self.create_response(
+            request.get("id"),
+            {"status": "ok"}
+        )
+
     async def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理MCP请求"""
         method = request.get("method")
@@ -156,6 +219,16 @@ class CursorOptimizedMCPServer:
                 return await self.handle_tools_list(request)
             elif method == "tools/call":
                 return await self.handle_tools_call(request)
+            elif method == "listOfferings":
+                return await self.handle_list_offerings(request)
+            elif method == "serverInfo":
+                return await self.handle_server_info(request)
+            elif method == "resources/list":
+                return await self.handle_resources_list(request)
+            elif method == "prompts/list":
+                return await self.handle_prompts_list(request)
+            elif method == "ping":
+                return await self.handle_ping(request)
             else:
                 return self.create_response(
                     request.get("id"),
@@ -350,6 +423,9 @@ class CursorOptimizedMCPServer:
 
     async def run(self):
         """运行MCP服务器"""
+        # 输出启动信息到stderr以便调试
+        print("MCP Server ready", file=sys.stderr, flush=True)
+        
         # 生产模式：始终使用MCP协议，不检测终端
         try:
             async for line in self.read_stdin_lines():
@@ -371,7 +447,8 @@ class CursorOptimizedMCPServer:
                         None,
                         error={"code": -32700, "message": "Parse error"}
                     )
-                    print(json.dumps(error_response, ensure_ascii=False), flush=True)
+                    response_json = json.dumps(error_response, ensure_ascii=False)
+                    print(response_json, flush=True)
                     
                 except Exception as e:
                     # 其他错误
@@ -379,7 +456,8 @@ class CursorOptimizedMCPServer:
                         None,
                         error={"code": -32603, "message": f"Internal error: {str(e)}"}
                     )
-                    print(json.dumps(error_response, ensure_ascii=False), flush=True)
+                    response_json = json.dumps(error_response, ensure_ascii=False)
+                    print(response_json, flush=True)
                     
         except KeyboardInterrupt:
             pass
