@@ -152,6 +152,47 @@ brew install python@3.10
 sudo pacman -S python310
 ```
 
+## 🛠️ 故障排除
+
+### pip路径问题
+如果遇到 `bad interpreter: No such file or directory` 错误：
+
+```bash
+# 问题症状
+main: /home/user/.local/bin/pip3.10: /usr/local/bin/python3.10: bad interpreter: No such file or directory
+
+# 解决方案1: 使用修复脚本
+curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/fix_pip_path.sh | bash
+
+# 解决方案2: 手动修复
+python3.10 -m ensurepip --user --upgrade
+python3.10 -m pip install --user --upgrade pip
+
+# 解决方案3: 使用调试模式安装
+DEBUG=1 curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+```
+
+### 依赖冲突
+如果遇到包版本冲突：
+```bash
+# 强制重新安装所有依赖
+python3.10 -m pip install --user --force-reinstall mcp httpx pydantic PyYAML
+
+# 或使用保守版本
+python3.10 -m pip install --user mcp==1.0.0 httpx==0.27.0 pydantic==1.10.21 PyYAML==6.0
+```
+
+### 权限问题
+如果遇到权限错误：
+```bash
+# 确保使用用户安装模式
+python3.10 -m pip install --user <package>
+
+# 或检查目录权限
+mkdir -p ~/.local/bin ~/.local/share
+chmod 755 ~/.local/bin ~/.local/share
+```
+
 ## 📖 文档
 
 - [安装指南](docs/INSTALL_GUIDE.md) - 详细的安装和配置说明

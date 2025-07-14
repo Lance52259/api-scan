@@ -15,6 +15,9 @@ EXECUTABLE_NAME="api-scan"
 DEFAULT_BRANCH="master"
 INSTALL_BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
 
+# 调试模式（可通过环境变量DEBUG=1启用）
+DEBUG_MODE="${DEBUG:-0}"
+
 # 全局变量
 PIP_CMD=""
 
@@ -46,6 +49,12 @@ print_error() {
 
 print_step() {
     echo -e "${PURPLE}🔧 $1${NC}"
+}
+
+print_debug() {
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo -e "${CYAN}🐛 DEBUG: $1${NC}"
+    fi
 }
 
 # 检查命令是否存在
@@ -214,36 +223,93 @@ check_dependencies() {
         fi
     fi
     
-    # 检查pip3.10（优先）或pip3
+    # 智能选择pip命令（改进版本）
     local pip_cmd=""
-    if command_exists pip3.10; then
-        pip_cmd="pip3.10"
-        local pip_version=$(pip3.10 --version 2>&1)
-        print_success "pip3.10 已安装: $pip_version"
-    elif command_exists pip3; then
-        pip_cmd="pip3"
-        local pip_version=$(pip3 --version 2>&1)
-        print_success "pip3 已安装: $pip_version"
-        
-        # 检查pip3是否与python3.10兼容
-        local pip_python_version=$(pip3 show pip 2>/dev/null | grep "Location:" | grep -o "python[0-9]\.[0-9]*" | head -1)
-        if [[ "$pip_python_version" != "python3.10" && "$pip_python_version" != "" ]]; then
-            print_warning "检测到pip3可能不兼容Python 3.10，将尝试使用python3.10 -m pip"
+    
+    print_debug "开始pip命令检测..."
+    print_debug "Python 3.10 路径: $(which python3.10 2>/dev/null || echo '未找到')"
+    
+    # 优先级1: 测试 python3.10 -m pip 是否可用
+    if command_exists python3.10; then
+        print_info "测试 python3.10 -m pip 可用性..."
+        print_debug "尝试: python3.10 -m pip --version"
+        if python3.10 -m pip --version >/dev/null 2>&1; then
             pip_cmd="python3.10 -m pip"
-        fi
-    else
-        # 如果安装了 python3.10，尝试使用内置的 pip 模块
-        if command_exists python3.10; then
-            pip_cmd="python3.10 -m pip"
-            print_info "使用 python3.10 -m pip 作为包管理器"
+            local pip_version=$(python3.10 -m pip --version 2>&1)
+            print_success "使用 python3.10 -m pip: $pip_version"
         else
-            missing_deps+=("python3-pip")
-            print_warning "缺少 pip3 - 必需用于Python包管理"
+            print_debug "python3.10 -m pip 不可用"
         fi
+    fi
+    
+    # 优先级2: 如果上面失败，尝试独立的 pip3.10
+    if [ -z "$pip_cmd" ] && command_exists pip3.10; then
+        print_info "测试独立 pip3.10 可用性..."
+        print_debug "pip3.10 路径: $(which pip3.10)"
+        print_debug "pip3.10 shebang 检查: $(head -1 $(which pip3.10) 2>/dev/null || echo '无法读取')"
+        
+        # 测试pip3.10是否能正常工作
+        print_debug "尝试: pip3.10 --version"
+        if pip3.10 --version >/dev/null 2>&1; then
+            pip_cmd="pip3.10"
+            local pip_version=$(pip3.10 --version 2>&1)
+            print_success "pip3.10 已安装且可用: $pip_version"
+            
+            # 检查pip3.10是否与python3.10兼容
+            local pip_python_version=$(pip3.10 show pip 2>/dev/null | grep "Location:" | grep -o "python[0-9]\.[0-9]*" | head -1)
+            print_debug "pip3.10 关联的Python版本: $pip_python_version"
+            if [[ "$pip_python_version" != "python3.10" && "$pip_python_version" != "" ]]; then
+                print_warning "检测到pip3.10可能不兼容Python 3.10，将回退到 python3.10 -m pip"
+                pip_cmd="python3.10 -m pip"
+            fi
+        else
+            print_warning "pip3.10 存在但无法正常工作，尝试其他方案"
+            print_debug "pip3.10 错误输出: $(pip3.10 --version 2>&1 || echo '命令执行失败')"
+        fi
+    fi
+    
+    # 优先级3: 尝试 pip3
+    if [ -z "$pip_cmd" ] && command_exists pip3; then
+        print_info "测试 pip3 可用性..."
+        if pip3 --version >/dev/null 2>&1; then
+            pip_cmd="pip3"
+            local pip_version=$(pip3 --version 2>&1)
+            print_success "pip3 已安装: $pip_version"
+            
+            # 检查pip3是否与python3.10兼容
+            local pip_python_version=$(pip3 show pip 2>/dev/null | grep "Location:" | grep -o "python[0-9]\.[0-9]*" | head -1)
+            if [[ "$pip_python_version" != "python3.10" && "$pip_python_version" != "" ]]; then
+                print_warning "检测到pip3可能不兼容Python 3.10，将回退到 python3.10 -m pip"
+                pip_cmd="python3.10 -m pip"
+            fi
+        fi
+    fi
+    
+    # 优先级4: 尝试确保 pip 模块安装
+    if [ -z "$pip_cmd" ] && command_exists python3.10; then
+        print_info "尝试安装 pip 模块..."
+        # 尝试安装 ensurepip
+        if python3.10 -m ensurepip --user >/dev/null 2>&1; then
+            print_success "成功安装 pip 模块"
+            pip_cmd="python3.10 -m pip"
+        else
+            print_warning "无法自动安装 pip 模块"
+        fi
+    fi
+    
+    # 如果所有方法都失败
+    if [ -z "$pip_cmd" ]; then
+        missing_deps+=("python3-pip")
+        print_error "无法找到可用的 pip 命令"
+        print_info "请手动安装 pip："
+        echo "   sudo apt install python3.10-pip  # Ubuntu/Debian"
+        echo "   或者"
+        echo "   python3.10 -m ensurepip --user"
     fi
     
     # 将pip命令保存到全局变量供后续使用
     PIP_CMD="$pip_cmd"
+    print_info "最终选择的pip命令: $PIP_CMD"
     
     # 检查curl（用于更新功能）
     if ! command_exists curl; then
@@ -439,11 +505,67 @@ install_python_deps() {
         exit 1
     fi
     
-    # 检查pip3版本并升级如果需要
+    # 如果没有可用的pip命令，尝试修复
+    if [ -z "$PIP_CMD" ]; then
+        print_warning "没有可用的pip命令，尝试修复..."
+        
+        # 尝试通过ensurepip安装pip
+        if command_exists python3.10; then
+            print_info "尝试通过ensurepip安装pip..."
+            if python3.10 -m ensurepip --user --default-pip 2>/dev/null; then
+                print_success "成功安装pip模块"
+                PIP_CMD="python3.10 -m pip"
+            else
+                print_error "无法自动安装pip，请手动安装"
+                echo "请运行: python3.10 -m ensurepip --user"
+                exit 1
+            fi
+        else
+            print_error "Python 3.10不可用，无法继续"
+            exit 1
+        fi
+    fi
+    
+    print_info "使用pip命令: $PIP_CMD"
+    
+    # 检查pip命令是否真的可用
+    if ! $PIP_CMD --version >/dev/null 2>&1; then
+        print_warning "pip命令无法正常工作，尝试修复..."
+        
+        # 如果是独立的pip3.10出现问题，回退到python -m pip
+        if [[ "$PIP_CMD" == "pip3.10" ]] && command_exists python3.10; then
+            print_info "回退到 python3.10 -m pip..."
+            PIP_CMD="python3.10 -m pip"
+            
+            # 如果还是不行，尝试重新安装pip
+            if ! $PIP_CMD --version >/dev/null 2>&1; then
+                print_info "尝试重新安装pip模块..."
+                if python3.10 -m ensurepip --user --upgrade 2>/dev/null; then
+                    print_success "pip模块重新安装成功"
+                else
+                    print_error "无法修复pip，请手动处理"
+                    echo "建议运行:"
+                    echo "  python3.10 -m ensurepip --user --upgrade"
+                    echo "  或"
+                    echo "  sudo apt install python3.10-pip"
+                    exit 1
+                fi
+            fi
+        else
+            print_error "pip命令无法工作，安装无法继续"
+            exit 1
+        fi
+    fi
+    
+    # 确认pip命令可用后继续
+    local pip_version=$($PIP_CMD --version 2>&1)
+    print_success "确认pip可用: $pip_version"
+    
+    # 检查pip版本并升级如果需要
     print_info "检查pip版本..."
     
     # 首先尝试升级pip
-    if "$PIP_CMD" install --user --upgrade pip; then
+    if $PIP_CMD install --user --upgrade pip >/dev/null 2>&1; then
         print_success "pip升级成功"
     else
         print_warning "pip升级失败，继续使用当前版本"
@@ -451,7 +573,7 @@ install_python_deps() {
     
     # 更新包索引（对于老版本的pip特别重要）
     print_info "更新包索引..."
-    "$PIP_CMD" install --user --upgrade setuptools wheel || {
+    $PIP_CMD install --user --upgrade setuptools wheel >/dev/null 2>&1 || {
         print_warning "setuptools/wheel更新失败，继续执行"
     }
     
@@ -469,9 +591,9 @@ install_python_deps() {
     
     # 首先尝试直接安装requirements.txt
     print_info "尝试策略0: 直接安装requirements.txt..."
-    if "$PIP_CMD" install --user -r requirements.txt --no-deps 2>/dev/null; then
+    if $PIP_CMD install --user -r requirements.txt --no-deps >/dev/null 2>&1; then
         # 无依赖安装成功，现在安装依赖
-        if "$PIP_CMD" install --user -r requirements.txt; then
+        if $PIP_CMD install --user -r requirements.txt >/dev/null 2>&1; then
             print_success "直接安装成功"
             verify_python_packages
             return 0
@@ -495,7 +617,7 @@ install_python_deps() {
             local package_name=$(echo "$package_spec" | sed 's/[><=!].*//' | tr -d '[:space:]')
             print_info "安装包: $package_spec"
             
-            if ! "$PIP_CMD" install --user "$package_spec" --force-reinstall; then
+            if ! $PIP_CMD install --user "$package_spec" --force-reinstall >/dev/null 2>&1; then
                 print_warning "包 $package_spec 安装失败"
                 install_success=false
                 break
@@ -525,9 +647,9 @@ install_python_deps() {
         print_info "救援安装: $package_spec"
         
         # 尝试多种安装方式
-        if "$PIP_CMD" install --user "$package_spec"; then
+        if $PIP_CMD install --user "$package_spec" >/dev/null 2>&1; then
             print_success "成功安装: $package_spec"
-        elif "$PIP_CMD" install --user "$package_name"; then
+        elif $PIP_CMD install --user "$package_name" >/dev/null 2>&1; then
             print_success "成功安装: $package_name (最新版本)"
         else
             print_error "救援安装失败: $package_spec"
@@ -537,19 +659,19 @@ install_python_deps() {
             case "$package_name" in
                 "mcp")
                     print_info "尝试安装MCP的特定版本..."
-                    if "$PIP_CMD" install --user "mcp==1.0.0" --no-deps; then
+                    if $PIP_CMD install --user "mcp==1.0.0" --no-deps >/dev/null 2>&1; then
                         print_success "成功安装MCP 1.0.0 (无依赖模式)"
                     fi
                     ;;
                 "httpx")
                     print_info "尝试安装兼容的httpx版本..."
-                    if "$PIP_CMD" install --user "httpx==0.27.0"; then
+                    if $PIP_CMD install --user "httpx==0.27.0" >/dev/null 2>&1; then
                         print_success "成功安装httpx 0.27.0"
                     fi
                     ;;
                 "pydantic")
                     print_info "尝试安装pydantic v1..."
-                    if "$PIP_CMD" install --user "pydantic<2.0.0"; then
+                    if $PIP_CMD install --user "pydantic<2.0.0" >/dev/null 2>&1; then
                         print_success "成功安装pydantic v1"
                     fi
                     ;;
