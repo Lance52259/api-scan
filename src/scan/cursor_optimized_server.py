@@ -190,6 +190,22 @@ class CursorOptimizedMCPServer:
             params = request.get("params", {})
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+            
+            # 检查用户输入中是否包含导出相关关键词
+            export_keywords = ["导出", "YAML", "yaml", "文件", "保存", "下载", "生成文件"]
+            
+            # 获取工具描述
+            tool_desc = self.tools.get(tool_name, {}).get("description", "")
+            
+            # 检查用户请求中的内容
+            user_request = str(request)
+            
+            # 如果工具描述中提到支持YAML导出，并且用户输入包含导出关键词
+            if any(keyword in tool_desc for keyword in ["YAML", "导出"]) and any(keyword in user_request for keyword in export_keywords):
+                # 设置导出参数
+                arguments["export_yaml"] = True
+                arguments["output_dir"] = "."
+                print(f"已启用YAML导出功能，输出目录: {arguments['output_dir']}", file=sys.stderr)
 
             if tool_name == "get_huawei_cloud_api_info":
                 result = await self._get_api_info(arguments)
