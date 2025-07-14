@@ -72,6 +72,113 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# 检查并修复dpkg中断问题
+fix_dpkg_interruption() {
+    local max_retries=3
+    local retry_count=0
+    local wait_time=5
+    
+    while [ $retry_count -lt $max_retries ]; do
+        print_info "尝试修复dpkg中断问题 (尝试 $((retry_count + 1))/$max_retries)..."
+        
+        if sudo dpkg --configure -a; then
+            print_success "已修复dpkg中断问题"
+            return 0
+        else
+            ((retry_count++))
+            if [ $retry_count -lt $max_retries ]; then
+                print_warning "修复失败，等待 ${wait_time} 秒后重试..."
+                sleep $wait_time
+            fi
+        fi
+    done
+    
+    print_error "修复dpkg中断问题失败（已重试 $max_retries 次）"
+    print_info "建议手动运行以下命令："
+    echo "   sudo dpkg --configure -a"
+    echo "   sudo apt-get update"
+    echo "   sudo apt-get install -f"
+    return 1
+}
+
+# 检查dpkg状态并自动修复
+check_and_fix_dpkg() {
+    print_info "检查dpkg状态..."
+    
+    # 检查是否存在锁文件
+    local lock_files=(
+        "/var/lib/dpkg/lock"
+        "/var/lib/dpkg/lock-frontend"
+        "/var/lib/apt/lists/lock"
+        "/var/cache/apt/archives/lock"
+    )
+    
+    local found_locks=false
+    for lock_file in "${lock_files[@]}"; do
+        if [ -f "$lock_file" ]; then
+            found_locks=true
+            print_warning "发现dpkg/apt锁文件: $lock_file"
+        fi
+    done
+    
+    if [ "$found_locks" = true ]; then
+        print_info "尝试清理锁文件..."
+        for lock_file in "${lock_files[@]}"; do
+            if [ -f "$lock_file" ]; then
+                if sudo rm -f "$lock_file"; then
+                    print_success "已删除锁文件: $lock_file"
+                else
+                    print_error "无法删除锁文件: $lock_file"
+                fi
+            fi
+        done
+    fi
+    
+    # 检查dpkg状态
+    if ! sudo dpkg --status dpkg >/dev/null 2>&1 || [ -f "/var/lib/dpkg/updates" ] || [ -f "/var/lib/apt/lists/partial" ]; then
+        print_warning "检测到dpkg/apt可能存在问题，尝试修复..."
+        
+        # 尝试修复dpkg
+        if ! fix_dpkg_interruption; then
+            # 如果修复失败，尝试更激进的修复方案
+            print_warning "常规修复失败，尝试强制修复..."
+            
+            # 清理可能损坏的dpkg状态
+            if sudo rm -rf /var/lib/dpkg/updates/* 2>/dev/null; then
+                print_info "已清理dpkg更新状态"
+            fi
+            
+            # 清理可能损坏的apt列表
+            if sudo rm -rf /var/lib/apt/lists/partial/* 2>/dev/null; then
+                print_info "已清理apt部分下载列表"
+            fi
+            
+            # 重新初始化apt/dpkg
+            print_info "重新初始化apt/dpkg..."
+            if sudo apt-get clean && sudo apt-get update --fix-missing; then
+                print_success "apt/dpkg重新初始化成功"
+                return 0
+            else
+                print_error "apt/dpkg重新初始化失败"
+                return 1
+            fi
+        fi
+    else
+        print_success "dpkg状态正常"
+        return 0
+    fi
+}
+
+# 检查sudo权限
+check_sudo_access() {
+    if ! sudo -v &>/dev/null; then
+        print_error "需要sudo权限来安装依赖"
+        print_info "请确保您有sudo权限，或联系系统管理员"
+        exit 1
+    fi
+    print_success "sudo权限检查通过"
+}
+
 # 自动安装 Python 3.10
 install_python310() {
     print_step "开始安装 Python 3.10.13..."
@@ -105,19 +212,53 @@ install_python310() {
         exit 1
     }
     
-    # 更新包管理器
-    print_info "更新包管理器..."
-    if ! sudo apt update; then
-        print_error "更新包管理器失败"
+    # 检查并修复dpkg/apt
+    if ! check_and_fix_dpkg; then
+        print_error "无法修复dpkg/apt问题"
         exit 1
     fi
     
+    # 更新包管理器
+    print_info "更新包管理器..."
+    local update_retries=3
+    local update_retry_count=0
+    
+    while [ $update_retry_count -lt $update_retries ]; do
+        if sudo apt-get update; then
+            break
+        else
+            ((update_retry_count++))
+            if [ $update_retry_count -lt $update_retries ]; then
+                print_warning "更新失败，尝试修复并重试 ($update_retry_count/$update_retries)..."
+                check_and_fix_dpkg
+                sleep 5
+            else
+                print_error "更新包管理器失败"
+                exit 1
+            fi
+        fi
+    done
+    
     # 安装编译依赖
     print_info "安装编译依赖..."
-    if ! sudo apt install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget; then
-        print_error "安装编译依赖失败"
-        exit 1
-    fi
+    local install_retries=3
+    local install_retry_count=0
+    
+    while [ $install_retry_count -lt $install_retries ]; do
+        if sudo apt-get install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget; then
+            break
+        else
+            ((install_retry_count++))
+            if [ $install_retry_count -lt $install_retries ]; then
+                print_warning "安装失败，尝试修复并重试 ($install_retry_count/$install_retries)..."
+                check_and_fix_dpkg
+                sleep 5
+            else
+                print_error "安装编译依赖失败"
+                exit 1
+            fi
+        fi
+    done
     
     # 下载 Python 3.10.13
     print_info "下载 Python 3.10.13 源码..."
@@ -1279,6 +1420,16 @@ main() {
     echo "=================================================================="
     echo -e "${NC}"
     
+    # 检查sudo权限
+    check_sudo_access
+    
+    # 检查并修复dpkg/apt
+    if ! check_and_fix_dpkg; then
+        print_error "无法修复系统包管理器问题，安装无法继续"
+        exit 1
+    fi
+    
+    # 继续其他安装步骤
     check_dependencies
     create_directories
     clone_or_update_repo
@@ -1291,5 +1442,5 @@ main() {
     print_success "安装完成！"
 }
 
-# 运行主函数
+# 执行主函数
 main "$@"
