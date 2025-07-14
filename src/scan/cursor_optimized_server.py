@@ -33,7 +33,7 @@ class CursorOptimizedMCPServer:
         # 修正工具名称：使用下划线而不是短横线（Cursor要求）
         self.tools = {
             "get_huawei_cloud_api_info": {
-                "description": "获取华为云指定产品的API接口详细信息。当用户询问特定华为云产品的API详情、请求参数、响应格式、使用方法时自动调用。支持查询API文档、接口规范、参数说明等。支持导出为YAML文件。",
+                "description": "获取华为云指定产品的API接口详细信息。当用户询问特定华为云产品的API详情、请求参数、响应格式、使用方法时自动调用。支持查询API文档、接口规范、参数说明等。当用户提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'时，自动设置export_yaml=true导出YAML文件。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -47,35 +47,35 @@ class CursorOptimizedMCPServer:
                         },
                         "export_yaml": {
                             "type": "boolean",
-                            "description": "是否导出为YAML文件，默认false"
+                            "description": "是否导出为YAML文件。当用户明确提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'、'导出为文件'、'输出文件'时设置为true，否则默认false"
                         },
                         "output_dir": {
                             "type": "string",
-                            "description": "YAML文件输出目录，默认为'api_exports'"
+                            "description": "YAML文件输出目录。用户指定'项目根目录'、'当前目录'时使用'.'，其他情况默认为'api_exports'"
                         }
                     },
                     "required": ["product_name", "interface_name"]
                 }
             },
             "list_huawei_cloud_products": {
-                "description": "列出华为云所有可用的产品和服务。当用户询问华为云有哪些产品、服务列表、产品目录、或想了解华为云提供的服务时自动调用。包含计算、存储、网络、数据库、AI等各类服务。支持导出为YAML文件。",
+                "description": "列出华为云所有可用的产品和服务。当用户询问华为云有哪些产品、服务列表、产品目录、或想了解华为云提供的服务时自动调用。包含计算、存储、网络、数据库、AI等各类服务。当用户提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'时，自动设置export_yaml=true导出YAML文件。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "export_yaml": {
                             "type": "boolean",
-                            "description": "是否导出为YAML文件，默认false"
+                            "description": "是否导出为YAML文件。当用户明确提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'、'导出为文件'、'输出文件'时设置为true，否则默认false"
                         },
                         "output_dir": {
                             "type": "string",
-                            "description": "YAML文件输出目录，默认为'api_exports'"
+                            "description": "YAML文件输出目录。用户指定'项目根目录'、'当前目录'时使用'.'，其他情况默认为'api_exports'"
                         }
                     },
                     "required": []
                 }
             },
             "list_product_apis": {
-                "description": "列出指定华为云产品的所有API接口列表。当用户询问某个产品有哪些API、接口列表、或想了解产品的API能力时自动调用。支持导出为YAML文件。",
+                "description": "列出指定华为云产品的所有API接口列表。当用户询问某个产品有哪些API、接口列表、或想了解产品的API能力时自动调用。当用户提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'时，自动设置export_yaml=true导出YAML文件。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -85,11 +85,11 @@ class CursorOptimizedMCPServer:
                         },
                         "export_yaml": {
                             "type": "boolean",
-                            "description": "是否导出为YAML文件，默认false"
+                            "description": "是否导出为YAML文件。当用户明确提到'导出'、'YAML'、'文件'、'保存'、'下载'、'生成文件'、'导出为文件'、'输出文件'时设置为true，否则默认false"
                         },
                         "output_dir": {
                             "type": "string",
-                            "description": "YAML文件输出目录，默认为'api_exports'"
+                            "description": "YAML文件输出目录。用户指定'项目根目录'、'当前目录'时使用'.'，其他情况默认为'api_exports'"
                         }
                     },
                     "required": ["product_name"]
@@ -273,6 +273,10 @@ class CursorOptimizedMCPServer:
             export_yaml = arguments.get("export_yaml", False)
             output_dir = arguments.get("output_dir", "api_exports")
             
+            # 智能处理输出目录
+            if output_dir in [".", "当前目录", "项目根目录", "根目录", "当前项目", "项目下", "项目目录"]:
+                output_dir = "."
+            
             client = HuaweiCloudApiClient()
             async with client:
                 products_response = await client.get_products()
@@ -315,7 +319,17 @@ class CursorOptimizedMCPServer:
                             products_data["groups"].append(group_data)
                         
                         yaml_path = exporter.export_products_to_yaml(products_data)
-                        yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                        
+                        # 获取绝对路径用于更清晰的显示
+                        abs_yaml_path = os.path.abspath(yaml_path)
+                        
+                        yaml_info = f"\n\n📄 产品列表YAML文件已成功导出到: {yaml_path}"
+                        yaml_info += f"\n📍 完整路径: {abs_yaml_path}"
+                        
+                        # 如果是输出到当前目录，特别说明
+                        if output_dir == ".":
+                            yaml_info += f"\n✅ 已按要求导出到项目根目录"
+                            
                     except Exception as e:
                         yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
                 
@@ -337,6 +351,10 @@ class CursorOptimizedMCPServer:
             product_name = arguments.get("product_name")
             export_yaml = arguments.get("export_yaml", False)
             output_dir = arguments.get("output_dir", "api_exports")
+            
+            # 智能处理输出目录
+            if output_dir in [".", "当前目录", "项目根目录", "根目录", "当前项目", "项目下", "项目目录"]:
+                output_dir = "."
             
             if not product_name:
                 raise ValueError("缺少必需参数: product_name")
@@ -372,7 +390,17 @@ class CursorOptimizedMCPServer:
                         exporter = YamlExporter(output_dir)
                         apis_data = [api.model_dump() for api in apis]
                         yaml_path = exporter.export_product_apis_to_yaml(product_name, apis_data)
-                        yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                        
+                        # 获取绝对路径用于更清晰的显示
+                        abs_yaml_path = os.path.abspath(yaml_path)
+                        
+                        yaml_info = f"\n\n📄 {product_name}的API列表YAML文件已成功导出到: {yaml_path}"
+                        yaml_info += f"\n📍 完整路径: {abs_yaml_path}"
+                        
+                        # 如果是输出到当前目录，特别说明
+                        if output_dir == ".":
+                            yaml_info += f"\n✅ 已按要求导出到项目根目录"
+                            
                     except Exception as e:
                         yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
                 
@@ -396,6 +424,10 @@ class CursorOptimizedMCPServer:
             export_yaml = arguments.get("export_yaml", False)
             output_dir = arguments.get("output_dir", "api_exports")
             
+            # 智能处理输出目录
+            if output_dir in [".", "当前目录", "项目根目录", "根目录", "当前项目", "项目下", "项目目录"]:
+                output_dir = "."
+            
             if not product_name or not interface_name:
                 raise ValueError("缺少必需参数: product_name 和 interface_name")
             
@@ -418,7 +450,17 @@ class CursorOptimizedMCPServer:
                         try:
                             exporter = YamlExporter(output_dir)
                             yaml_path = exporter.export_api_detail_to_yaml(api_info)
-                            yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                            
+                            # 获取绝对路径用于更清晰的显示
+                            abs_yaml_path = os.path.abspath(yaml_path)
+                            
+                            yaml_info = f"\n\n📄 YAML文件已成功导出到: {yaml_path}"
+                            yaml_info += f"\n📍 完整路径: {abs_yaml_path}"
+                            
+                            # 如果是输出到当前目录，特别说明
+                            if output_dir == ".":
+                                yaml_info += f"\n✅ 已按要求导出到项目根目录"
+                                
                         except Exception as e:
                             yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
                     
@@ -434,12 +476,12 @@ class CursorOptimizedMCPServer:
                     return {
                         "content": [
                             {
-                                "type": "text", 
+                                "type": "text",
                                 "text": f"未找到产品'{product_name}'的接口'{interface_name}'"
                             }
                         ]
                     }
-                
+                    
         except Exception as e:
             raise Exception(f"获取API信息失败: {str(e)}")
 
