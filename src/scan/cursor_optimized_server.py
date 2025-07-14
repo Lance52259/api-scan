@@ -5,8 +5,10 @@ import json
 import sys
 import logging
 import signal
+import os
 from typing import Dict, Any, List, Optional, AsyncIterator
 from .client import HuaweiCloudApiClient
+from .yaml_exporter import YamlExporter
 
 # 配置最小日志，只记录严重错误到stderr
 logging.basicConfig(
@@ -31,7 +33,7 @@ class CursorOptimizedMCPServer:
         # 修正工具名称：使用下划线而不是短横线（Cursor要求）
         self.tools = {
             "get_huawei_cloud_api_info": {
-                "description": "获取华为云指定产品的API接口详细信息。当用户询问特定华为云产品的API详情、请求参数、响应格式、使用方法时自动调用。支持查询API文档、接口规范、参数说明等。",
+                "description": "获取华为云指定产品的API接口详细信息。当用户询问特定华为云产品的API详情、请求参数、响应格式、使用方法时自动调用。支持查询API文档、接口规范、参数说明等。支持导出为YAML文件。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -42,27 +44,52 @@ class CursorOptimizedMCPServer:
                         "interface_name": {
                             "type": "string", 
                             "description": "API接口名称，如'创建云服务器'、'新增/修改弹性伸缩策略'、'上传对象'等"
+                        },
+                        "export_yaml": {
+                            "type": "boolean",
+                            "description": "是否导出为YAML文件，默认false"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "YAML文件输出目录，默认为'api_exports'"
                         }
                     },
                     "required": ["product_name", "interface_name"]
                 }
             },
             "list_huawei_cloud_products": {
-                "description": "列出华为云所有可用的产品和服务。当用户询问华为云有哪些产品、服务列表、产品目录、或想了解华为云提供的服务时自动调用。包含计算、存储、网络、数据库、AI等各类服务。",
+                "description": "列出华为云所有可用的产品和服务。当用户询问华为云有哪些产品、服务列表、产品目录、或想了解华为云提供的服务时自动调用。包含计算、存储、网络、数据库、AI等各类服务。支持导出为YAML文件。",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "export_yaml": {
+                            "type": "boolean",
+                            "description": "是否导出为YAML文件，默认false"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "YAML文件输出目录，默认为'api_exports'"
+                        }
+                    },
                     "required": []
                 }
             },
             "list_product_apis": {
-                "description": "列出指定华为云产品的所有API接口列表。当用户询问某个产品有哪些API、接口列表、或想了解产品的API能力时自动调用。",
+                "description": "列出指定华为云产品的所有API接口列表。当用户询问某个产品有哪些API、接口列表、或想了解产品的API能力时自动调用。支持导出为YAML文件。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "product_name": {
                             "type": "string",
                             "description": "华为云产品名称，如'ECS'、'VPC'、'RDS'等"
+                        },
+                        "export_yaml": {
+                            "type": "boolean",
+                            "description": "是否导出为YAML文件，默认false"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "YAML文件输出目录，默认为'api_exports'"
                         }
                     },
                     "required": ["product_name"]
@@ -243,6 +270,9 @@ class CursorOptimizedMCPServer:
     async def _list_products(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """列出所有产品"""
         try:
+            export_yaml = arguments.get("export_yaml", False)
+            output_dir = arguments.get("output_dir", "api_exports")
+            
             client = HuaweiCloudApiClient()
             async with client:
                 products_response = await client.get_products()
@@ -253,25 +283,50 @@ class CursorOptimizedMCPServer:
                     for product in group.products:
                         all_products.append(product.name)
                 
+                # 构建响应文本
                 if all_products:
                     product_list = "\n".join([f"- {product}" for product in all_products])
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"华为云产品列表（共{len(all_products)}个）：\n\n{product_list}"
-                            }
-                        ]
-                    }
+                    response_text = f"华为云产品列表（共{len(all_products)}个）：\n\n{product_list}"
                 else:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "无法获取产品列表"
+                    response_text = "无法获取产品列表"
+                
+                # 如果需要导出YAML
+                yaml_info = ""
+                if export_yaml:
+                    try:
+                        exporter = YamlExporter(output_dir)
+                        
+                        # 构建产品数据
+                        products_data = {
+                            "groups": []
+                        }
+                        
+                        for group in products_response.groups:
+                            group_data = {
+                                "name": group.name,
+                                "products": []
                             }
-                        ]
-                    }
+                            for product in group.products:
+                                group_data["products"].append({
+                                    "name": product.name,
+                                    "productshort": product.productshort,
+                                    "description": product.description
+                                })
+                            products_data["groups"].append(group_data)
+                        
+                        yaml_path = exporter.export_products_to_yaml(products_data)
+                        yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                    except Exception as e:
+                        yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
+                
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": response_text + yaml_info
+                        }
+                    ]
+                }
                 
         except Exception as e:
             raise Exception(f"获取产品列表失败: {str(e)}")
@@ -280,6 +335,8 @@ class CursorOptimizedMCPServer:
         """列出指定产品的所有API"""
         try:
             product_name = arguments.get("product_name")
+            export_yaml = arguments.get("export_yaml", False)
+            output_dir = arguments.get("output_dir", "api_exports")
             
             if not product_name:
                 raise ValueError("缺少必需参数: product_name")
@@ -301,25 +358,32 @@ class CursorOptimizedMCPServer:
                 # 获取API列表
                 apis = await client.get_all_apis(product_short)
                 
+                # 构建响应文本
                 if apis:
                     api_list = "\n".join([f"- {api.summary}" for api in apis])
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"产品'{product_name}'的API列表（共{len(apis)}个）：\n\n{api_list}"
-                            }
-                        ]
-                    }
+                    response_text = f"产品'{product_name}'的API列表（共{len(apis)}个）：\n\n{api_list}"
                 else:
-                    return {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"未找到产品'{product_name}'的API列表"
-                            }
-                        ]
-                    }
+                    response_text = f"未找到产品'{product_name}'的API列表"
+                
+                # 如果需要导出YAML
+                yaml_info = ""
+                if export_yaml and apis:
+                    try:
+                        exporter = YamlExporter(output_dir)
+                        apis_data = [api.model_dump() for api in apis]
+                        yaml_path = exporter.export_product_apis_to_yaml(product_name, apis_data)
+                        yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                    except Exception as e:
+                        yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
+                
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": response_text + yaml_info
+                        }
+                    ]
+                }
                 
         except Exception as e:
             raise Exception(f"获取产品API列表失败: {str(e)}")
@@ -329,6 +393,8 @@ class CursorOptimizedMCPServer:
         try:
             product_name = arguments.get("product_name")
             interface_name = arguments.get("interface_name")
+            export_yaml = arguments.get("export_yaml", False)
+            output_dir = arguments.get("output_dir", "api_exports")
             
             if not product_name or not interface_name:
                 raise ValueError("缺少必需参数: product_name 和 interface_name")
@@ -338,16 +404,29 @@ class CursorOptimizedMCPServer:
                 api_info = await client.get_api_info_by_user_input(product_name, interface_name)
                 
                 if api_info:
+                    # 构建响应文本
+                    response_text = (f"华为云API信息：\n\n"
+                                   f"产品：{api_info.get('product_name', 'N/A')}\n"
+                                   f"接口名称：{api_info.get('api_basic_info', {}).get('summary', 'N/A')}\n"
+                                   f"接口描述：{api_info.get('api_basic_info', {}).get('description', 'N/A')}\n"
+                                   f"请求方法：{api_info.get('api_basic_info', {}).get('method', 'N/A')}\n"
+                                   f"详细信息：{json.dumps(api_info.get('api_detail', {}), ensure_ascii=False, indent=2)}")
+                    
+                    # 如果需要导出YAML
+                    yaml_info = ""
+                    if export_yaml:
+                        try:
+                            exporter = YamlExporter(output_dir)
+                            yaml_path = exporter.export_api_detail_to_yaml(api_info)
+                            yaml_info = f"\n\n📄 YAML文件已导出到: {yaml_path}"
+                        except Exception as e:
+                            yaml_info = f"\n\n⚠️ YAML导出失败: {str(e)}"
+                    
                     return {
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"华为云API信息：\n\n"
-                                       f"产品：{api_info.get('product_name', 'N/A')}\n"
-                                       f"接口名称：{api_info.get('api_basic_info', {}).get('summary', 'N/A')}\n"
-                                       f"接口描述：{api_info.get('api_basic_info', {}).get('description', 'N/A')}\n"
-                                       f"请求方法：{api_info.get('api_basic_info', {}).get('method', 'N/A')}\n"
-                                       f"详细信息：{json.dumps(api_info.get('api_detail', {}), ensure_ascii=False, indent=2)}"
+                                "text": response_text + yaml_info
                             }
                         ]
                     }
@@ -381,11 +460,12 @@ class CursorOptimizedMCPServer:
         print("=== Cursor优化MCP服务器测试模式 ===", file=sys.stderr)
         print("1. 测试产品列表查询", file=sys.stderr)
         print("2. 测试API信息查询", file=sys.stderr)
-        print("3. 退出", file=sys.stderr)
+        print("3. 测试YAML导出", file=sys.stderr)
+        print("4. 退出", file=sys.stderr)
         
         while True:
             try:
-                choice = input("请选择操作 (1-3): ")
+                choice = input("请选择操作 (1-4): ")
                 
                 if choice == "1":
                     print("正在获取华为云产品列表...", file=sys.stderr)
@@ -410,8 +490,32 @@ class CursorOptimizedMCPServer:
                         print(result["content"][0]["text"], file=sys.stderr)
                     except Exception as e:
                         print(f"查询失败: {str(e)}", file=sys.stderr)
-                        
+                
                 elif choice == "3":
+                    print("测试YAML导出功能...", file=sys.stderr)
+                    export_choice = input("选择导出类型 (1-产品列表/2-API详情): ")
+                    
+                    if export_choice == "1":
+                        print("正在导出产品列表为YAML...", file=sys.stderr)
+                        result = await self._list_products({"export_yaml": True})
+                        print(result["content"][0]["text"], file=sys.stderr)
+                    elif export_choice == "2":
+                        product = input("请输入产品名称: ")
+                        interface = input("请输入接口名称: ")
+                        print(f"正在导出{product}的{interface}接口信息为YAML...", file=sys.stderr)
+                        try:
+                            result = await self._get_api_info({
+                                "product_name": product,
+                                "interface_name": interface,
+                                "export_yaml": True
+                            })
+                            print(result["content"][0]["text"], file=sys.stderr)
+                        except Exception as e:
+                            print(f"导出失败: {str(e)}", file=sys.stderr)
+                    else:
+                        print("无效选择", file=sys.stderr)
+                        
+                elif choice == "4":
                     print("退出测试模式", file=sys.stderr)
                     break
                 else:
