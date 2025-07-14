@@ -9,21 +9,32 @@
 - 🌐 **全局命令** - 一键安装，任意路径使用
 - 📊 **完整覆盖** - 支持280+华为云产品和服务
 - 🔧 **易于维护** - 内置状态检查和诊断功能
+- 🐍 **Python 3.10 自动安装** - 自动检测并安装 Python 3.10（Ubuntu/Debian）
 
 ## 🚀 快速开始
 
-### 安装全局命令
+### 一键安装
 ```bash
-# 克隆项目
+# 使用 curl 安装（推荐）
+curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+
+# 或使用 wget
+wget -qO- https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+
+# 或克隆后安装
 git clone https://github.com/Lance52259/api-scan.git
 cd api-scan
-
-# 安装依赖
-pip3 install -r requirements.txt
-
-# 安装全局命令
-./api-scan --install
+./install.sh
 ```
+
+### Python 3.10 自动安装
+如果系统没有 Python 3.10，安装脚本会自动：
+- 检测系统环境（支持 Ubuntu/Debian）
+- 询问是否安装 Python 3.10.13
+- 自动下载、编译和安装 Python 3.10
+- 安装完成后继续 MCP 服务器安装
+
+详细信息请参考：[Python 3.10 自动安装功能](PYTHON_AUTO_INSTALL.md)
 
 ### 配置Cursor
 在Cursor MCP设置中添加：
@@ -70,15 +81,17 @@ RDS产品提供哪些API？
 ## 🔧 技术架构
 
 - **协议**: JSON-RPC 2.0 (MCP标准)
+- **Python版本**: 3.10+ (自动安装支持)
 - **工具数量**: 3个核心工具
 - **产品覆盖**: 280+华为云产品
-- **兼容性**: Python 3.6+
+- **兼容性**: Ubuntu/Debian (自动安装), 其他系统需手动安装Python
 
 ## 📁 项目结构
 
 ```
 api-scan/
 ├── api-scan                           # 全局命令行工具
+├── install.sh                         # 增强安装脚本（支持Python自动安装）
 ├── run_cursor_server.py               # MCP服务器启动器
 ├── test_server_interactive.py         # 交互式测试
 ├── test_cursor_mcp.py                 # 协议测试
@@ -88,6 +101,7 @@ api-scan/
 │   └── models.py                      # 数据模型
 ├── INSTALL_GUIDE.md                   # 安装指南
 ├── CURSOR_AUTO_TOOL_USAGE.md          # 使用指南
+├── PYTHON_AUTO_INSTALL.md             # Python自动安装说明
 └── requirements.txt                   # 依赖声明
 ```
 
@@ -114,10 +128,32 @@ api-scan --run > server.log 2>&1
 api-scan --help
 ```
 
+## 🐍 Python 环境要求
+
+### 自动安装（推荐）
+- **支持系统**: Ubuntu/Debian
+- **自动检测**: 缺少 Python 3.10 时自动安装
+- **安装版本**: Python 3.10.13
+- **编译优化**: 启用优化选项
+
+### 手动安装
+对于其他系统，请手动安装 Python 3.10+：
+```bash
+# CentOS/RHEL
+sudo dnf install python3.10 python3.10-pip
+
+# macOS
+brew install python@3.10
+
+# Arch Linux
+sudo pacman -S python310
+```
+
 ## 📖 文档
 
 - [安装指南](INSTALL_GUIDE.md) - 详细的安装和配置说明
 - [使用指南](CURSOR_AUTO_TOOL_USAGE.md) - Cursor Agent模式使用方法
+- [Python自动安装](PYTHON_AUTO_INSTALL.md) - Python 3.10 自动安装功能详解
 
 ## 🤝 贡献
 
