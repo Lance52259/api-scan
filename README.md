@@ -34,7 +34,7 @@ cd api-scan
 - 自动下载、编译和安装 Python 3.10
 - 安装完成后继续 MCP 服务器安装
 
-详细信息请参考：[Python 3.10 自动安装功能](PYTHON_AUTO_INSTALL.md)
+详细信息请参考：[Python 3.10 自动安装功能](docs/PYTHON_AUTO_INSTALL.md)
 
 ### 配置Cursor
 在Cursor MCP设置中添加：
@@ -93,16 +93,19 @@ api-scan/
 ├── api-scan                           # 全局命令行工具
 ├── install.sh                         # 增强安装脚本（支持Python自动安装）
 ├── run_cursor_server.py               # MCP服务器启动器
-├── test_server_interactive.py         # 交互式测试
-├── test_cursor_mcp.py                 # 协议测试
+├── yaml_export_tool.py                # YAML导出工具
 ├── src/scan/
 │   ├── cursor_optimized_server.py     # 核心MCP服务器
 │   ├── client.py                      # 华为云API客户端
+│   ├── yaml_exporter.py               # YAML导出模块
 │   └── models.py                      # 数据模型
-├── INSTALL_GUIDE.md                   # 安装指南
-├── CURSOR_AUTO_TOOL_USAGE.md          # 使用指南
-├── PYTHON_AUTO_INSTALL.md             # Python自动安装说明
-└── requirements.txt                   # 依赖声明
+├── docs/
+│   ├── INSTALL_GUIDE.md                     # 安装指南
+│   ├── CURSOR_AUTO_TOOL_USAGE.md            # 使用指南
+│   ├── PYTHON_AUTO_INSTALL.md               # Python自动安装说明
+│   ├── YAML_EXPORT_GUIDE.md                 # YAML导出功能指南
+│   └── DEPENDENCY_CONFLICT_RESOLUTION.md    # 依赖冲突解决方案
+└── requirements.txt                         # 依赖声明
 ```
 
 ## 🛠️ 开发
@@ -151,9 +154,11 @@ sudo pacman -S python310
 
 ## 📖 文档
 
-- [安装指南](INSTALL_GUIDE.md) - 详细的安装和配置说明
-- [使用指南](CURSOR_AUTO_TOOL_USAGE.md) - Cursor Agent模式使用方法
-- [Python自动安装](PYTHON_AUTO_INSTALL.md) - Python 3.10 自动安装功能详解
+- [安装指南](docs/INSTALL_GUIDE.md) - 详细的安装和配置说明
+- [使用指南](docs/CURSOR_AUTO_TOOL_USAGE.md) - Cursor Agent模式使用方法
+- [Python自动安装](docs/PYTHON_AUTO_INSTALL.md) - Python 3.10 自动安装功能详解
+- [YAML导出指南](docs/YAML_EXPORT_GUIDE.md) - YAML导出功能详细说明
+- [依赖冲突解决](docs/DEPENDENCY_CONFLICT_RESOLUTION.md) - 依赖版本冲突解决方案
 
 ## 🤝 贡献
 
