@@ -53,6 +53,109 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# 自动安装 Python 3.10
+install_python310() {
+    print_step "开始安装 Python 3.10.13..."
+    
+    # 检查是否为支持的系统
+    if ! command_exists apt-get; then
+        print_error "自动安装 Python 3.10 仅支持 Ubuntu/Debian 系统"
+        print_info "请手动安装 Python 3.10 后重新运行此脚本"
+        exit 1
+    fi
+    
+    # 创建临时目录
+    local temp_dir=$(mktemp -d)
+    local original_dir=$(pwd)
+    
+    print_info "使用临时目录: $temp_dir"
+    
+    # 错误处理函数
+    cleanup_python_install() {
+        print_info "清理临时文件..."
+        cd "$original_dir"
+        rm -rf "$temp_dir"
+    }
+    
+    # 设置错误时清理
+    trap cleanup_python_install EXIT
+    
+    # 执行安装步骤
+    cd "$temp_dir" || {
+        print_error "无法进入临时目录"
+        exit 1
+    }
+    
+    # 更新包管理器
+    print_info "更新包管理器..."
+    if ! sudo apt update; then
+        print_error "更新包管理器失败"
+        exit 1
+    fi
+    
+    # 安装编译依赖
+    print_info "安装编译依赖..."
+    if ! sudo apt install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev libnss3-dev libssl-dev libreadline-dev libffi-dev wget; then
+        print_error "安装编译依赖失败"
+        exit 1
+    fi
+    
+    # 下载 Python 3.10.13
+    print_info "下载 Python 3.10.13 源码..."
+    if ! wget https://www.python.org/ftp/python/3.10.13/Python-3.10.13.tar.xz; then
+        print_error "下载 Python 源码失败"
+        exit 1
+    fi
+    
+    # 解压
+    print_info "解压源码..."
+    if ! tar -xf Python-3.10.13.tar.xz; then
+        print_error "解压源码失败"
+        exit 1
+    fi
+    
+    cd Python-3.10.13 || {
+        print_error "无法进入 Python 源码目录"
+        exit 1
+    }
+    
+    # 配置编译选项
+    print_info "配置编译选项..."
+    if ! ./configure --enable-optimizations; then
+        print_error "配置编译选项失败"
+        exit 1
+    fi
+    
+    # 编译（使用所有可用CPU核心）
+    print_info "编译 Python 3.10.13（这可能需要几分钟）..."
+    if ! make -j $(nproc); then
+        print_error "编译 Python 失败"
+        exit 1
+    fi
+    
+    # 安装
+    print_info "安装 Python 3.10.13..."
+    if ! sudo make altinstall; then
+        print_error "安装 Python 失败"
+        exit 1
+    fi
+    
+    # 验证安装
+    if command_exists python3.10; then
+        local installed_version=$(python3.10 --version 2>&1)
+        print_success "Python 3.10 安装成功: $installed_version"
+    else
+        print_error "Python 3.10 安装失败"
+        exit 1
+    fi
+    
+    # 清理临时文件
+    cleanup_python_install
+    trap - EXIT
+    
+    print_success "Python 3.10.13 安装完成"
+}
+
 # 检查并安装依赖
 check_dependencies() {
     print_step "检查系统依赖..."
@@ -68,10 +171,34 @@ check_dependencies() {
         print_success "git 已安装: $(git --version | head -1)"
     fi
     
-    # 检查python3
+    # 检查python3.10
     if ! command_exists python3.10; then
-        missing_deps+=("python3.10")
         print_warning "缺少 python3.10 - 必需的运行时环境"
+        
+        # 询问是否自动安装
+        echo ""
+        print_info "检测到系统没有 python3.10 命令"
+        print_info "MCP服务器需要 Python 3.10 或更高版本"
+        echo ""
+        
+        # 检查是否为交互式终端
+        if [ -t 0 ]; then
+            echo -n "是否自动安装 Python 3.10.13? (y/N): "
+            read -r response
+            case "$response" in
+                [yY]|[yY][eE][sS])
+                    install_python310
+                    ;;
+                *)
+                    print_info "跳过自动安装"
+                    missing_deps+=("python3.10")
+                    ;;
+            esac
+        else
+            # 非交互式模式，直接安装
+            print_info "非交互式模式，自动安装 Python 3.10.13"
+            install_python310
+        fi
     else
         local python_version=$(python3.10 --version 2>&1)
         print_success "python3.10 已安装: $python_version"
@@ -105,8 +232,14 @@ check_dependencies() {
             pip_cmd="python3.10 -m pip"
         fi
     else
-        missing_deps+=("python3-pip")
-        print_warning "缺少 pip3 - 必需用于Python包管理"
+        # 如果安装了 python3.10，尝试使用内置的 pip 模块
+        if command_exists python3.10; then
+            pip_cmd="python3.10 -m pip"
+            print_info "使用 python3.10 -m pip 作为包管理器"
+        else
+            missing_deps+=("python3-pip")
+            print_warning "缺少 pip3 - 必需用于Python包管理"
+        fi
     fi
     
     # 将pip命令保存到全局变量供后续使用
