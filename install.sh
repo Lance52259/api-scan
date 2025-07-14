@@ -416,6 +416,17 @@ clone_or_update_repo() {
     fi
 }
 
+# 创建备用requirements文件
+create_fallback_requirements() {
+    local strategy_name="$1"
+    local packages="$2"
+    local fallback_file="requirements_${strategy_name}.txt"
+    
+    print_info "创建备用requirements文件: $fallback_file"
+    echo "$packages" | tr ' ' '\n' > "$fallback_file"
+    echo "$fallback_file"
+}
+
 # 安装Python依赖
 install_python_deps() {
     print_step "检查和安装Python依赖..."
@@ -444,135 +455,179 @@ install_python_deps() {
         print_warning "setuptools/wheel更新失败，继续执行"
     }
     
-    # 读取requirements.txt并逐个检查安装依赖
-    print_info "分析依赖包要求..."
-    local requirements_failed=false
-    local missing_packages=()
+    # 预定义的兼容版本组合
+    local compatibility_sets=(
+        # 策略1: 最新稳定版本（推荐）
+        "mcp>=1.0.0 httpx>=0.27.0 pydantic>=1.9.0,<3.0.0 PyYAML>=6.0"
+        # 策略2: MCP 1.0兼容版本
+        "mcp==1.0.0 httpx>=0.27.0 pydantic>=1.9.0,<2.0.0 PyYAML>=6.0"
+        # 策略3: 保守版本（如果新版本有问题）
+        "mcp==1.0.0 httpx==0.27.0 pydantic==1.10.21 PyYAML==6.0"
+    )
     
-    while IFS= read -r line || [ -n "$line" ]; do
-        # 跳过空行和注释
-        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-        
-        # 提取包名（去掉版本要求）
-        local package_spec="$line"
-        local package_name=$(echo "$package_spec" | sed 's/[><=!].*//' | tr -d '[:space:]')
-        
-        if [ -n "$package_name" ]; then
-            print_info "检查包: $package_name"
-            
-            # 检查包是否已安装
-            if ! python3.10 -c "import $package_name" >/dev/null 2>&1; then
-                # 对于mcp包的特殊处理（常见的导入名称可能不同）
-                if [ "$package_name" = "mcp" ]; then
-                    # 尝试检查是否有mcp相关的安装
-                    if ! python3.10 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
-                        missing_packages+=("$package_spec")
-                        print_warning "包 $package_name 未安装或版本不符合要求"
-                    else
-                        print_success "包 $package_name 已安装"
-                    fi
-                else
-                    missing_packages+=("$package_spec")
-                    print_warning "包 $package_name 未安装"
-                fi
-            else
-                print_success "包 $package_name 已安装"
-            fi
+    print_step "尝试智能解决依赖冲突..."
+    
+    # 首先尝试直接安装requirements.txt
+    print_info "尝试策略0: 直接安装requirements.txt..."
+    if "$PIP_CMD" install --user -r requirements.txt --no-deps 2>/dev/null; then
+        # 无依赖安装成功，现在安装依赖
+        if "$PIP_CMD" install --user -r requirements.txt; then
+            print_success "直接安装成功"
+            verify_python_packages
+            return 0
         fi
-    done < requirements.txt
+    fi
     
-    # 如果有缺失的包，尝试安装
-    if [ ${#missing_packages[@]} -gt 0 ]; then
-        print_step "自动安装缺失的依赖包..."
-        echo "需要安装的包: ${missing_packages[*]}"
+    print_warning "直接安装失败，尝试兼容性策略..."
+    
+    # 尝试不同的兼容性策略
+    local strategy_num=1
+    for compatibility_set in "${compatibility_sets[@]}"; do
+        print_info "尝试策略${strategy_num}: 兼容版本组合"
+        echo "   版本组合: $compatibility_set"
         
-        # 尝试安装每个缺失的包
-        for package_spec in "${missing_packages[@]}"; do
+        # 解析包规格
+        local packages=($compatibility_set)
+        local install_success=true
+        
+        # 逐个安装包以更好地控制冲突
+        for package_spec in "${packages[@]}"; do
             local package_name=$(echo "$package_spec" | sed 's/[><=!].*//' | tr -d '[:space:]')
-            print_info "正在安装: $package_spec"
+            print_info "安装包: $package_spec"
             
-            # 特殊处理mcp包
-            if [ "$package_name" = "mcp" ]; then
-                print_info "尝试安装MCP包..."
-                
-                # 方法1：直接安装官方mcp包
-                if "$PIP_CMD" install --user --upgrade --index-url https://pypi.org/simple/ mcp; then
-                    print_success "成功安装官方MCP包"
-                # 方法2：如果失败，尝试安装特定版本
-                elif "$PIP_CMD" install --user "mcp==1.0.0"; then
-                    print_success "成功安装MCP包 v1.0.0"
-                # 方法3：如果还失败，安装可用的最新版本
-                elif "$PIP_CMD" install --user mcp --pre; then
-                    print_success "成功安装MCP包（预发布版本）"
-                else
-                    print_error "MCP包安装失败，所有方法都尝试过了"
-                    print_info "尝试手动检查: $PIP_CMD search mcp"
-                    requirements_failed=true
-                    continue
-                fi
-            else
-                # 常规包安装
-                if ! "$PIP_CMD" install --user "$package_spec"; then
-                    print_error "安装失败: $package_spec"
-                    
-                    # 对于httpx和pydantic，尝试安装兼容版本
-                    if [ "$package_name" = "httpx" ]; then
-                        print_info "尝试安装兼容的httpx版本..."
-                        if "$PIP_CMD" install --user "httpx>=0.22.0,<0.23.0"; then
-                            print_success "成功安装兼容的httpx版本"
-                        else
-                            requirements_failed=true
-                            continue
-                        fi
-                    elif [ "$package_name" = "pydantic" ]; then
-                        print_info "尝试安装兼容的pydantic版本..."
-                        if "$PIP_CMD" install --user "pydantic>=1.9.0,<1.10.0"; then
-                            print_success "成功安装兼容的pydantic版本"
-                        else
-                            requirements_failed=true
-                            continue
-                        fi
-                    else
-                        requirements_failed=true
-                        continue
-                    fi
-                else
-                    print_success "成功安装: $package_spec"
-                fi
-            fi
-            
-            # 验证安装
-            if [ "$package_name" = "mcp" ]; then
-                if python3.10 -c "import mcp; print('MCP version:', mcp.__version__)" >/dev/null 2>&1; then
-                    local mcp_version=$(python3.10 -c "import mcp; print(mcp.__version__)" 2>/dev/null)
-                    print_success "MCP包验证通过 (版本: $mcp_version)"
-                else
-                    print_warning "MCP包安装后验证失败，但继续执行"
-                fi
-            else
-                if python3.10 -c "import $package_name" >/dev/null 2>&1; then
-                    print_success "包 $package_name 验证通过"
-                else
-                    print_warning "包 $package_name 安装后验证失败"
-                fi
+            if ! "$PIP_CMD" install --user "$package_spec" --force-reinstall; then
+                print_warning "包 $package_spec 安装失败"
+                install_success=false
+                break
             fi
         done
+        
+        if [ "$install_success" = true ]; then
+            print_success "策略${strategy_num}安装成功"
+            verify_python_packages
+            return 0
+        else
+            print_warning "策略${strategy_num}失败，尝试下一个策略..."
+        fi
+        
+        ((strategy_num++))
+    done
+    
+    # 如果所有策略都失败，尝试最后的救援方案
+    print_warning "所有预定义策略失败，尝试救援安装..."
+    
+    # 救援策略：逐个安装核心包
+    local core_packages=("PyYAML>=6.0" "pydantic>=1.9.0" "httpx>=0.27.0" "mcp>=1.0.0")
+    local rescue_success=true
+    
+    for package_spec in "${core_packages[@]}"; do
+        local package_name=$(echo "$package_spec" | sed 's/[><=!].*//' | tr -d '[:space:]')
+        print_info "救援安装: $package_spec"
+        
+        # 尝试多种安装方式
+        if "$PIP_CMD" install --user "$package_spec"; then
+            print_success "成功安装: $package_spec"
+        elif "$PIP_CMD" install --user "$package_name"; then
+            print_success "成功安装: $package_name (最新版本)"
+        else
+            print_error "救援安装失败: $package_spec"
+            rescue_success=false
+            
+            # 尝试特殊处理
+            case "$package_name" in
+                "mcp")
+                    print_info "尝试安装MCP的特定版本..."
+                    if "$PIP_CMD" install --user "mcp==1.0.0" --no-deps; then
+                        print_success "成功安装MCP 1.0.0 (无依赖模式)"
+                    fi
+                    ;;
+                "httpx")
+                    print_info "尝试安装兼容的httpx版本..."
+                    if "$PIP_CMD" install --user "httpx==0.27.0"; then
+                        print_success "成功安装httpx 0.27.0"
+                    fi
+                    ;;
+                "pydantic")
+                    print_info "尝试安装pydantic v1..."
+                    if "$PIP_CMD" install --user "pydantic<2.0.0"; then
+                        print_success "成功安装pydantic v1"
+                    fi
+                    ;;
+            esac
+        fi
+    done
+    
+    # 最终验证
+    verify_python_packages
+    
+    if [ "$rescue_success" = false ]; then
+        print_warning "部分依赖安装可能有问题，但继续执行"
+        print_info "如果遇到问题，请手动运行以下命令："
+        echo "   $PIP_CMD install --user --force-reinstall mcp httpx pydantic PyYAML"
+    fi
+}
+
+# 验证Python包安装
+verify_python_packages() {
+    print_step "验证Python包安装..."
+    
+    local verification_failed=false
+    local required_packages=(
+        "mcp:import mcp; import importlib.metadata; print('MCP version:', importlib.metadata.version('mcp'))"
+        "httpx:import httpx; print('httpx version:', httpx.__version__)"
+        "pydantic:import pydantic; print('pydantic version:', getattr(pydantic, '__version__', getattr(pydantic, 'VERSION', 'unknown')))"
+        "PyYAML:import yaml; print('PyYAML version:', yaml.__version__)"
+    )
+    
+    for package_info in "${required_packages[@]}"; do
+        local package_name="${package_info%:*}"
+        local import_test="${package_info#*:}"
+        
+        if python3.10 -c "$import_test" >/dev/null 2>&1; then
+            local version_info=$(python3.10 -c "$import_test" 2>/dev/null)
+            print_success "$package_name: $version_info"
+        else
+            print_error "$package_name: 未安装或导入失败"
+            verification_failed=true
+        fi
+    done
+    
+    # 测试包之间的兼容性
+    print_info "测试包兼容性..."
+    if python3.10 -c "
+import mcp, httpx, pydantic, yaml
+print('✅ 所有包导入成功')
+
+# 获取版本信息
+try:
+    import importlib.metadata
+    mcp_version = importlib.metadata.version('mcp')
+except ImportError:
+    import pkg_resources
+    mcp_version = pkg_resources.get_distribution('mcp').version
+
+print(f'MCP: {mcp_version}')
+print(f'httpx: {httpx.__version__}')
+print(f'pydantic: {getattr(pydantic, \"__version__\", getattr(pydantic, \"VERSION\", \"unknown\"))}')
+print(f'PyYAML: {yaml.__version__}')
+
+# 测试基本功能
+from mcp import ClientSession
+from httpx import AsyncClient
+print('✅ 基本功能导入测试通过')
+" 2>/dev/null; then
+        print_success "包兼容性测试通过"
     else
-        print_success "所有Python依赖包已满足要求"
+        print_warning "包兼容性测试失败，可能存在版本冲突"
+        verification_failed=true
     fi
     
-    # 最终验证：尝试安装整个requirements.txt（以防遗漏）
-    print_step "执行完整依赖安装验证..."
-    if "$PIP_CMD" install --user -r requirements.txt; then
-        print_success "Python依赖安装和验证完成"
+    if [ "$verification_failed" = true ]; then
+        print_warning "依赖验证发现问题，但安装将继续"
+        print_info "如果功能异常，请尝试重新安装："
+        echo "   curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash"
     else
-        print_warning "完整依赖验证有警告，但继续执行"
-    fi
-    
-    # 如果有关键失败，提示用户
-    if [ "$requirements_failed" = true ]; then
-        print_warning "某些依赖安装失败，可能影响功能"
-        print_info "您可以稍后手动运行: $PIP_CMD install --user -r $INSTALL_DIR/requirements.txt"
+        print_success "所有Python依赖验证通过"
     fi
 }
 
@@ -642,6 +697,21 @@ def run_test():
         print(f"❌ 测试启动失败: {e}")
         sys.exit(1)
 
+def run_yaml_export():
+    """启动YAML导出工具"""
+    print("📄 启动YAML导出工具...")
+    
+    try:
+        os.chdir(INSTALL_DIR)
+        # 传递命令行参数给yaml_export_tool.py
+        args = sys.argv[2:]  # 跳过 'api-scan' 和 '--yaml'
+        subprocess.run([get_python_executable(), "yaml_export_tool.py"] + args)
+    except KeyboardInterrupt:
+        print("\n⏹️  YAML导出已取消")
+    except Exception as e:
+        print(f"❌ YAML导出失败: {e}")
+        sys.exit(1)
+
 def check_status():
     """检查服务器状态"""
     print("🔍 检查华为云API分析MCP服务器状态...")
@@ -654,7 +724,10 @@ def check_status():
             "run_cursor_server.py",
             "test_server_interactive.py", 
             "src/scan/cursor_optimized_server.py",
-            "src/scan/client.py"
+            "src/scan/client.py",
+            "src/scan/yaml_exporter.py",
+            "yaml_export_tool.py",
+            "test_yaml_export_simple.py"
         ]
         
         missing_files = []
@@ -666,6 +739,63 @@ def check_status():
             print("❌ 缺少必要文件:")
             for file in missing_files:
                 print(f"   - {file}")
+            return False
+        
+        # 检查Python依赖
+        print("🔍 检查Python依赖...")
+        required_packages = [
+            ("mcp", "import mcp; print('installed')"),
+            ("httpx", "import httpx; print(httpx.__version__)"),
+            ("pydantic", "import pydantic; print(pydantic.VERSION)"),
+            ("PyYAML", "import yaml; print(yaml.__version__)")
+        ]
+        
+        missing_packages = []
+        for package_name, import_test in required_packages:
+            try:
+                result = subprocess.run(
+                    [get_python_executable(), "-c", import_test],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                if result.returncode == 0:
+                    version = result.stdout.strip()
+                    print(f"✅ {package_name}: {version}")
+                else:
+                    missing_packages.append(package_name)
+                    print(f"❌ {package_name}: 未安装或版本不兼容")
+            except:
+                missing_packages.append(package_name)
+                print(f"❌ {package_name}: 检查失败")
+        
+        if missing_packages:
+            print("❌ 缺少必要的Python依赖包，请运行更新或重新安装")
+            return False
+        
+        # 运行专门的YAML导出功能测试
+        print("🔍 运行YAML导出功能完整测试...")
+        try:
+            result = subprocess.run(
+                [get_python_executable(), "test_yaml_export_simple.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if result.returncode == 0:
+                print("✅ YAML导出功能完整测试通过")
+                # 显示测试结果的关键信息
+                output_lines = result.stdout.split('\n')
+                for line in output_lines:
+                    if ('总计:' in line or '通过:' in line or '失败:' in line or 
+                        '🎉 所有测试通过' in line or '⚠️ 部分测试失败' in line):
+                        print(f"   {line}")
+            else:
+                print("❌ YAML导出功能测试失败")
+                print(f"   错误: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"❌ YAML导出功能测试执行失败: {e}")
             return False
         
         # 运行协议测试
@@ -688,9 +818,11 @@ def check_status():
             print("✅ 服务器状态正常")
             print("✅ JSON-RPC 2.0协议测试通过")
             print("✅ 3个工具可用:")
-            print("   - get_huawei_cloud_api_info")
-            print("   - list_huawei_cloud_products") 
-            print("   - list_product_apis")
+            print("   - get_huawei_cloud_api_info (支持YAML导出)")
+            print("   - list_huawei_cloud_products (支持YAML导出)") 
+            print("   - list_product_apis (支持YAML导出)")
+            print("✅ YAML导出工具可用")
+            print("✅ 所有功能正常工作")
             return True
         else:
             print("❌ 协议测试失败")
@@ -744,6 +876,7 @@ def show_help():
   $EXECUTABLE_NAME --test      启动交互式测试模式
   $EXECUTABLE_NAME --check     检查服务器状态和依赖
   $EXECUTABLE_NAME --update    更新到最新版本
+  $EXECUTABLE_NAME --yaml      启动YAML导出工具
   $EXECUTABLE_NAME --help      显示此帮助信息
 
 示例:
@@ -758,17 +891,65 @@ def show_help():
   
   # 更新到最新版本
   $EXECUTABLE_NAME --update
+  
+  # 导出所有产品列表为YAML
+  $EXECUTABLE_NAME --yaml --products
+  
+  # 导出ECS API列表为YAML
+  $EXECUTABLE_NAME --yaml --product-apis "弹性云服务器"
+  
+  # 导出API详细信息为YAML
+  $EXECUTABLE_NAME --yaml --api-detail "弹性云服务器" "创建云服务器"
+
+📄 YAML导出功能详解:
+  $EXECUTABLE_NAME --yaml --products                          # 导出所有产品列表
+  $EXECUTABLE_NAME --yaml --product-apis <产品名>             # 导出产品API列表
+  $EXECUTABLE_NAME --yaml --api-detail <产品名> <接口名>       # 导出API详细信息
+  $EXECUTABLE_NAME --yaml --multiple-apis <规格文件>          # 批量导出API
+  $EXECUTABLE_NAME --yaml --output-dir <目录>                 # 指定输出目录
+  $EXECUTABLE_NAME --yaml --help                              # YAML工具帮助
+
+📁 YAML导出文件格式:
+  - 产品列表: huawei_cloud_products.yml
+  - 产品API: <产品名>_apis.yml  
+  - API详情: <产品名>_<接口名>_detail.yml
+  - 批量API: multiple_apis.yml
+  - 默认输出目录: api_exports/
+
+🔧 批量导出规格文件格式:
+  创建文本文件，每行一个API，格式: 产品名,接口名
+  示例:
+    弹性云服务器,创建云服务器
+    弹性云服务器,删除云服务器
+    对象存储服务,上传对象
+
+💡 自定义输出目录示例:
+  $EXECUTABLE_NAME --yaml --products --output-dir ./my_exports
+  $EXECUTABLE_NAME --yaml --api-detail "弹性云服务器" "创建云服务器" --output-dir /tmp/api_docs
+
+🎯 在Cursor中使用YAML导出:
+  在Cursor Agent模式中，可以直接用自然语言请求:
+  "请导出华为云所有产品列表为YAML文件"
+  "请导出弹性云服务器的API列表为YAML文件"
+  "请导出弹性云服务器的创建云服务器API详细信息为YAML文件"
 
 支持的MCP工具:
-  - get_huawei_cloud_api_info    获取API详细信息
-  - list_huawei_cloud_products   列出所有华为云产品
-  - list_product_apis            列出产品的API列表
+  - get_huawei_cloud_api_info    获取API详细信息 (支持YAML导出)
+  - list_huawei_cloud_products   列出所有华为云产品 (支持YAML导出)
+  - list_product_apis            列出产品的API列表 (支持YAML导出)
 
 Cursor配置:
   在Cursor MCP设置中使用: $EXECUTABLE_NAME --run
 
 更新方式:
   curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/{os.environ.get('INSTALL_BRANCH', 'master')}/install.sh | bash
+
+🔍 依赖信息:
+  - Python: 3.10+
+  - MCP: 1.0.0+
+  - httpx: 0.22.0+
+  - pydantic: 1.9.0+
+  - PyYAML: 6.0+ (YAML导出功能)
     '''.strip())
 
 def main():
@@ -783,6 +964,7 @@ def main():
     group.add_argument('--test', action='store_true', help='启动测试模式')
     group.add_argument('--check', action='store_true', help='检查状态')
     group.add_argument('--update', action='store_true', help='更新到最新版本')
+    group.add_argument('--yaml', action='store_true', help='启动YAML导出工具')
     group.add_argument('--help', action='store_true', help='显示帮助')
     
     args = parser.parse_args()
@@ -795,6 +977,8 @@ def main():
         check_status()
     elif args.update:
         update()
+    elif args.yaml:
+        run_yaml_export()
     elif args.help:
         show_help()
     else:
@@ -905,6 +1089,16 @@ show_usage() {
         echo "  默认分支: $DEFAULT_BRANCH"
         echo "  使用默认分支更新: BRANCH=$DEFAULT_BRANCH curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/$DEFAULT_BRANCH/install.sh | bash"
     fi
+    echo ""
+    echo -e "${YELLOW}🔧 依赖冲突解决:${NC}"
+    echo "  本安装脚本包含智能依赖冲突解决机制："
+    echo "  • 策略1: 最新稳定版本 (mcp>=1.0.0, httpx>=0.27.0, pydantic>=1.9.0,<3.0.0)"
+    echo "  • 策略2: MCP 1.0兼容版本 (固定MCP版本,灵活其他包版本)"
+    echo "  • 策略3: 保守版本 (所有包使用经过测试的稳定版本)"
+    echo "  • 救援模式: 逐个安装核心包,处理特殊冲突"
+    echo ""
+    echo "  如果安装失败,可以手动运行:"
+    echo "    pip3.10 install --user --force-reinstall mcp httpx pydantic PyYAML"
     echo ""
 }
 
