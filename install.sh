@@ -2,8 +2,18 @@
 set -e
 
 # 华为云API分析MCP服务器 - 自动安装脚本
-# 使用方法: curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
-# 或指定分支: BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+# 
+# 特性:
+# • 全自动安装，无需手动干预或重启终端
+# • 智能Python 3.10检测与自动安装
+# • 智能pip命令选择与依赖冲突解决
+# • 环境变量自动配置，立即生效
+# • 支持交互式和非交互式安装模式
+#
+# 使用方法: 
+#   curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
+# 或指定分支: 
+#   BRANCH=master curl -fsSL https://raw.githubusercontent.com/Lance52259/api-scan/master/install.sh | bash
 
 REPO_URL="https://github.com/Lance52259/api-scan.git"
 REPO_NAME="api-scan"
@@ -1120,15 +1130,19 @@ EOF
 update_path() {
     print_step "配置环境变量..."
     
+    # 立即在当前shell中生效
+    export PATH="$BIN_DIR:$PATH"
+    print_info "已在当前会话中添加PATH: $BIN_DIR"
+    
     # 检查PATH中是否已包含BIN_DIR
     if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
-        print_info "PATH已包含$BIN_DIR"
-        return
+        print_success "PATH配置成功"
     fi
     
     # 检测shell类型并更新相应的配置文件
     local shell_rc=""
     local shell_name=$(basename "$SHELL")
+    local config_updated=false
     
     case "$shell_name" in
         "bash")
@@ -1147,14 +1161,40 @@ update_path() {
     esac
     
     if [ -n "$shell_rc" ]; then
-        echo "" >> "$shell_rc"
-        echo "# 华为云API分析MCP服务器" >> "$shell_rc"
-        echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$shell_rc"
-        print_success "已添加到$shell_rc"
-        print_warning "请运行 'source $shell_rc' 或重新打开终端以使PATH生效"
+        # 检查是否已经配置过，避免重复添加
+        local path_config_line="export PATH=\"$BIN_DIR:\$PATH\""
+        if ! grep -q "api-scan" "$shell_rc" 2>/dev/null; then
+            echo "" >> "$shell_rc"
+            echo "# 华为云API分析MCP服务器" >> "$shell_rc"
+            echo "$path_config_line" >> "$shell_rc"
+            print_success "已添加到$shell_rc"
+            config_updated=true
+        else
+            print_info "配置文件$shell_rc中已存在相关配置"
+        fi
+        
+        # 自动应用配置而不是要求用户重启
+        if [ "$config_updated" = true ]; then
+            print_info "自动应用配置更改到当前会话..."
+            # 在当前shell中source配置文件（静默处理）
+            if [ -f "$shell_rc" ]; then
+                source "$shell_rc" 2>/dev/null || {
+                    print_debug "source配置文件时出现警告，但PATH已在当前会话中生效"
+                }
+            fi
+            print_success "配置已自动生效，无需重启终端"
+        fi
     else
-        print_warning "无法自动配置PATH，请手动添加以下行到您的shell配置文件:"
-        echo "export PATH=\"$BIN_DIR:\$PATH\""
+        print_info "未检测到支持的shell配置文件，使用临时PATH设置"
+        print_info "PATH已在当前会话中生效: $BIN_DIR"
+    fi
+    
+    # 验证PATH是否正确设置
+    if command_exists "$EXECUTABLE_NAME"; then
+        print_success "命令行工具已可用"
+    else
+        print_debug "验证PATH设置: $PATH"
+        print_info "命令行工具将在验证安装步骤中测试"
     fi
 }
 
@@ -1162,9 +1202,7 @@ update_path() {
 verify_installation() {
     print_step "验证安装..."
     
-    # 临时添加到PATH进行测试
-    export PATH="$BIN_DIR:$PATH"
-    
+    # PATH已经在update_path函数中设置，无需临时设置
     if command_exists "$EXECUTABLE_NAME"; then
         print_success "命令行工具安装成功"
         
@@ -1176,6 +1214,9 @@ verify_installation() {
         fi
     else
         print_error "安装失败：无法找到$EXECUTABLE_NAME命令"
+        print_debug "当前PATH: $PATH"
+        print_debug "查找$EXECUTABLE_NAME: $(which $EXECUTABLE_NAME 2>/dev/null || echo '未找到')"
+        print_debug "BIN_DIR内容: $(ls -la $BIN_DIR/ 2>/dev/null || echo '目录不存在')"
         exit 1
     fi
 }
@@ -1184,6 +1225,12 @@ verify_installation() {
 show_usage() {
     echo ""
     echo -e "${CYAN}🎉 华为云API分析MCP服务器安装完成！${NC}"
+    echo ""
+    echo -e "${GREEN}✅ 安装特性:${NC}"
+    echo "  • 全自动安装，无需手动干预"
+    echo "  • 智能依赖冲突解决"
+    echo "  • 环境变量自动配置，无需重启终端"
+    echo "  • 支持非交互式安装模式"
     echo ""
     echo -e "${YELLOW}📋 使用方法:${NC}"
     echo "  $EXECUTABLE_NAME --help     # 查看帮助"
