@@ -41,8 +41,8 @@ api-scan [选项]
 {
   "mcpServers": {
     "api_scan": {
-      "command": "api-scan",
-      "args": ["--run"]
+      "command": "wsl",
+      "args": ["/home/huawei/.local/bin/api-scan", "--run"]
     }
   }
 }
@@ -55,7 +55,7 @@ api-scan [选项]
 
 ### 对比：旧配置 vs 新配置
 
-**旧配置** (仍然可用):
+**旧配置** (不再推荐):
 ```json
 {
   "mcpServers": {
@@ -73,8 +73,8 @@ api-scan [选项]
 {
   "mcpServers": {
     "api_scan": {
-      "command": "api-scan",
-      "args": ["--run"]
+      "command": "wsl",
+      "args": ["/home/huawei/.local/bin/api-scan", "--run"]
     }
   }
 }

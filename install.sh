@@ -1384,8 +1384,8 @@ show_usage() {
     echo '  {'
     echo '    "mcpServers": {'
     echo '      "api_scan": {'
-    echo "        \"command\": \"$EXECUTABLE_NAME\","
-    echo '        "args": ["--run"]'
+    echo '        "command": "wsl",'
+    echo '        "args": ["/home/huawei/.local/bin/api-scan", "--run"]'
     echo '      }'
     echo '    }'
     echo '  }'
