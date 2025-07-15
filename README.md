@@ -49,8 +49,8 @@ cd api-scan
 {
   "mcpServers": {
     "api_scan": {
-      "command": "api-scan",
-      "args": ["--run"]
+      "command": "wsl",
+      "args": ["/home/huawei/.local/bin/api-scan", "--run"]
     }
   }
 }
