@@ -69,11 +69,11 @@ class HuaweiCloudApiClient:
         return all_apis
 
     async def find_api_by_summary(self, product_short: str, interface_name: str) -> Optional[ApiBasicInfo]:
-        """根据接口名称查找API信息"""
+        """根据接口名称查找API信息（精确匹配）"""
         all_apis = await self.get_all_apis(product_short)
 
         for api in all_apis:
-            if interface_name in api.summary:
+            if interface_name == api.summary:
                 return api
 
         return None
