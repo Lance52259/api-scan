@@ -185,17 +185,17 @@ class HuaweiCloudApiClient:
         
         # 如果查询完全包含在API名称中
         if query_lower in api_lower:
-            # 计算额外字符的惩罚分数
-            extra_chars = len(api_lower) - len(query_lower)
+            # 计算额外词汇的惩罚分数
+            extra_words = self._count_extra_words(query_lower, api_lower)
             
             # 基础分数：完全匹配给予最高分
             base_score = 1.0
             
-            # 额外字符惩罚：每多一个字符扣0.01分，确保长度接近的API分数更高
-            penalty = extra_chars * 0.01
+            # 额外词汇惩罚：每多一个词扣0.3分，确保词汇数量少的API分数更高
+            penalty = extra_words * 0.3
             
-            # 确保分数不会低于0.5
-            return max(0.5, base_score - penalty)
+            # 确保分数不会低于0.1
+            return max(0.1, base_score - penalty)
         
         # 如果API名称完全包含在查询中
         if api_lower in query_lower:
@@ -229,6 +229,40 @@ class HuaweiCloudApiClient:
         
         final_score = base_score - penalty + position_bonus
         return max(0.0, min(1.0, final_score))
+    
+    def _count_extra_words(self, query: str, api_name: str) -> int:
+        """计算API名称中相对于查询的额外词汇数量"""
+        # 华为云API常见词汇
+        common_words = [
+            '重装', '服务器', '实例', '云服务器', '弹性云服务器', '批量', '创建', '删除', 
+            '修改', '更新', '查询', '获取', '列表', '详情', '上传', '下载', '备份', 
+            '恢复', '迁移', '扩容', '缩容', '启动', '停止', '重启', '暂停', '恢复', '挂起',
+            '管理', '应用', '组', '服务', '资源', '配置', '设置', '策略', '规则', '权限',
+            '镜像', '的'
+        ]
+        
+        # 提取查询和API名称中的词汇
+        query_words = set()
+        api_words = set()
+        
+        # 从查询中提取词汇
+        for word in common_words:
+            if word in query:
+                query_words.add(word)
+        
+        # 从API名称中提取词汇
+        for word in common_words:
+            if word in api_name:
+                api_words.add(word)
+        
+        # 计算额外词汇数量
+        extra_words = len(api_words - query_words)
+        
+        # 特殊处理：如果API名称包含"批量"而查询不包含，给予额外惩罚
+        if '批量' in api_name and '批量' not in query:
+            extra_words += 2  # "批量"词汇给予额外惩罚
+        
+        return extra_words
     
     def _count_chinese_words(self, text: str) -> int:
         """计算中文词汇数量（按常见词汇分割）"""
