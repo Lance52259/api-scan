@@ -6,6 +6,7 @@ import sys
 import logging
 import signal
 import os
+import re
 from typing import Dict, Any, List, Optional, AsyncIterator
 from .client import HuaweiCloudApiClient
 from .yaml_exporter import YamlExporter
@@ -105,8 +106,20 @@ class CursorOptimizedMCPServer:
         """处理信号"""
         self.running = False
 
-    def create_response(self, request_id: Any, result: Any = None, error: Any = None) -> Dict[str, Any]:
+    def create_response(self, request_id: Any, result: Any = None, error: Any = None) -> Optional[Dict[str, Any]]:
         """创建标准JSON-RPC 2.0响应"""
+        # 如果 request_id 为 None，这是通知类型请求，不应该发送响应
+        if request_id is None:
+            return None
+        
+        # 确保 id 是有效的类型（string 或 number）
+        if not isinstance(request_id, (str, int, float)):
+            # 如果 id 类型无效，尝试转换或跳过响应
+            try:
+                request_id = str(request_id)
+            except:
+                return None
+        
         response = {
             "jsonrpc": "2.0",
             "id": request_id
@@ -119,7 +132,7 @@ class CursorOptimizedMCPServer:
             
         return response
 
-    async def handle_initialize(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_initialize(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理初始化请求"""
         return self.create_response(
             request.get("id"),
@@ -137,7 +150,7 @@ class CursorOptimizedMCPServer:
             }
         )
 
-    async def handle_list_offerings(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_list_offerings(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理ListOfferings请求 - Cursor期望的标准方法"""
         return self.create_response(
             request.get("id"),
@@ -155,7 +168,7 @@ class CursorOptimizedMCPServer:
             }
         )
 
-    async def handle_server_info(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_server_info(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理服务器信息请求"""
         return self.create_response(
             request.get("id"),
@@ -171,7 +184,7 @@ class CursorOptimizedMCPServer:
             }
         )
 
-    async def handle_tools_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_tools_list(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理工具列表请求"""
         tools = [
             {
@@ -184,7 +197,7 @@ class CursorOptimizedMCPServer:
         
         return self.create_response(request.get("id"), {"tools": tools})
 
-    async def handle_tools_call(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_tools_call(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理工具调用请求"""
         try:
             params = request.get("params", {})
@@ -227,21 +240,21 @@ class CursorOptimizedMCPServer:
                 error={"code": -32603, "message": f"Tool execution error: {str(e)}"}
             )
 
-    async def handle_resources_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_resources_list(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理资源列表请求"""
         return self.create_response(
             request.get("id"),
             {"resources": []}
         )
 
-    async def handle_prompts_list(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_prompts_list(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理提示列表请求"""
         return self.create_response(
             request.get("id"),
             {"prompts": []}
         )
 
-    async def handle_ping(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_ping(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """处理ping请求"""
         return self.create_response(
             request.get("id"),
@@ -596,6 +609,8 @@ class CursorOptimizedMCPServer:
                 
                 try:
                     request = json.loads(line)
+                    # 尝试提取 request_id，如果无法提取则视为通知类型请求
+                    request_id = request.get("id")
                     response = await self.handle_request(request)
                     
                     # 只有非通知类型的请求才需要响应
@@ -603,23 +618,48 @@ class CursorOptimizedMCPServer:
                         response_json = json.dumps(response, ensure_ascii=False)
                         print(response_json, flush=True)
                     
-                except json.JSONDecodeError:
-                    # JSON解析错误，发送错误响应
-                    error_response = self.create_response(
-                        None,
-                        error={"code": -32700, "message": "Parse error"}
-                    )
-                    response_json = json.dumps(error_response, ensure_ascii=False)
-                    print(response_json, flush=True)
+                except json.JSONDecodeError as e:
+                    # JSON解析错误，尝试从原始行中提取 id
+                    # 如果无法解析JSON，则无法获取 id，跳过响应
+                    try:
+                        # 尝试简单提取 id（如果可能）
+                        id_match = re.search(r'"id"\s*:\s*([^,}\]]+)', line)
+                        if id_match:
+                            id_str = id_match.group(1).strip().strip('"\'')
+                            try:
+                                request_id = int(id_str) if id_str.isdigit() else id_str
+                            except:
+                                request_id = id_str
+                        else:
+                            request_id = None
+                        
+                        if request_id is not None:
+                            error_response = self.create_response(
+                                request_id,
+                                error={"code": -32700, "message": "Parse error"}
+                            )
+                            if error_response is not None:
+                                response_json = json.dumps(error_response, ensure_ascii=False)
+                                print(response_json, flush=True)
+                    except:
+                        # 如果无法提取 id，跳过响应（这是通知类型或格式完全错误的请求）
+                        pass
                     
                 except Exception as e:
-                    # 其他错误
-                    error_response = self.create_response(
-                        None,
-                        error={"code": -32603, "message": f"Internal error: {str(e)}"}
-                    )
-                    response_json = json.dumps(error_response, ensure_ascii=False)
-                    print(response_json, flush=True)
+                    # 其他错误，尝试从请求中获取 id
+                    try:
+                        request_id = request.get("id") if 'request' in locals() else None
+                        if request_id is not None:
+                            error_response = self.create_response(
+                                request_id,
+                                error={"code": -32603, "message": f"Internal error: {str(e)}"}
+                            )
+                            if error_response is not None:
+                                response_json = json.dumps(error_response, ensure_ascii=False)
+                                print(response_json, flush=True)
+                    except:
+                        # 如果无法处理错误响应，跳过
+                        pass
                     
         except KeyboardInterrupt:
             pass
